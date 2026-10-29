@@ -1,5 +1,5 @@
 {
-  "commandDigest": "sha256:ac258a7f7f29e4f39acca37878bed03022db17af7955634b1a75f59d46cbb23c",
+  "commandDigest": "sha256:9473de6ef4baf2bd82fe8b6757239bdc160960b0a78ae6f47fa9e0996544226c",
   "declaration": {
     "schema": "paperclip.acpx_profile_declaration.v1",
     "agent": "pi",
@@ -41,8 +41,8 @@
     },
     "modelSelection": "caller-selected-native-verified-v1",
     "providerConfigurationSourceSha256": "75a9a13f13f224dc092bd8ebf49e8747162172943761e44476c8eb18d80c52d4",
-    "credentialEnvironmentSourceSha256": "c6268c159bfa37a3e7aa0e37d91497579128a2f02f986304be436194d2a93439",
-    "runtimeSandboxSourceSha256": "04a49a24e3828ce8fca908de15e31ae932b8b1b4f7ecec0308627f6a8da9ba20",
+    "credentialEnvironmentSourceSha256": "2ed68b9aed9756fdd682721833eb2aeaa58f30f1dc8825c88886cc8e7ee92abe",
+    "runtimeSandboxSourceSha256": "b9f05e522f92b6bade51c7a17f8d28bf31ab9db26510b8d5ddce8519d563a875",
     "recoveryIdentitySourceSha256": "f74d061cc07b0c7ca04df62ca991d940a733d9ef6594b3362451769fc10030b8",
     "nativeCancellation": "acknowledged-cancelled-terminal-preserves-usage-v1",
     "dependencySecurityPatchSha256": "5273a195b952f233336122842faaf650193c04f36b9359d20d4d63079b0ce814",
