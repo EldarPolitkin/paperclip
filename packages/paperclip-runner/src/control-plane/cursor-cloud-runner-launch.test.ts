@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../drivers/runner-tool-bridge.js";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,6 +23,13 @@ function buildPrivateCursorCloudProxy(proxyPath: string): void {
     "const item = (await bundleVerifiedProviderEntrypoints({ write: false })).find(value => value.entrypoint.name === 'cursor-cloud-app-server-proxy');",
     `await writeFile(${JSON.stringify(proxyPath)}, item.verifiedResult.outputFiles[0].contents, { mode: 0o600 });`,
   ].join("\n")], { cwd: packageRoot, timeout: 20_000, stdio: "pipe" });
+}
+
+async function currentCloudScopeHeader(runtime: string, sessionId: string): Promise<string> {
+  const name = `checkpoint-${createHash("sha256").update(sessionId).digest("hex")}.json`;
+  const checkpoint = JSON.parse(await readFile(join(runtime, name), "utf8"));
+  expect(checkpoint.relayTurnToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  return `Bearer ${checkpoint.relayTurnToken}`;
 }
 
 it("opens and closes the real Cloud facade without a provider prompt", async () => {
@@ -231,15 +239,18 @@ async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean, 
   });
   const questionApplied = vi.fn(async () => ({ success: true, contentItems: [{ type: "inputText", text: JSON.stringify({ status: "applied", questionId: "question-controlled" }) }] }));
   bundle.transport.setServerRequestHandler(questionApplied);
-  const mcp = (body: Record<string, unknown>, sessionId?: string): Promise<{ sessionId?: string; value: any }> => new Promise((accept, reject) => {
-    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { Authorization: "Bearer synthetic-cloud-relay-token", "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
+  const mcp = async (body: Record<string, unknown>, sessionId?: string): Promise<{ sessionId?: string; value: any }> => {
+    const scopeHeader = await currentCloudScopeHeader(runtime, normalizedSessionId);
+    return new Promise((accept, reject) => {
+    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { Authorization: "Bearer synthetic-cloud-relay-token", [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: scopeHeader, "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
       let text = "";
       response.on("data", chunk => { text += chunk; });
       response.on("end", () => accept({ sessionId: response.headers["mcp-session-id"] as string | undefined, value: JSON.parse(text) }));
     });
     req.on("error", reject);
     req.end(JSON.stringify({ jsonrpc: "2.0", ...body }));
-  });
+    });
+  };
   try {
     if (governed) {
       await writeFile(join(root, "AGENTS.md"), "Keep assigned instructions.");
@@ -392,8 +403,10 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
   const options = { provider: "cursor_cloud" as const, cursorCloud, stateDirectory, runnerBinary: defaultCapabilityRunnerdBinary(),
     cursorCloudProxyPath: proxyPath, cursorCloudProxySha256: `sha256:${createHash("sha256").update(await readFile(proxyPath)).digest("hex")}`,
     lifecyclePolicy: { mode: "per_turn" as const } };
-  const mcp = (token: string, body: Record<string, unknown>, sessionId?: string): Promise<{ status: number; sessionId?: string; value: any }> => new Promise((accept, reject) => {
-    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
+  const mcp = async (token: string, body: Record<string, unknown>, sessionId?: string, priorScopeHeader?: string): Promise<{ status: number; sessionId?: string; value: any }> => {
+    const scopeHeader = priorScopeHeader ?? await currentCloudScopeHeader(runtime, normalizedSessionId);
+    return new Promise((accept, reject) => {
+    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { Authorization: `Bearer ${token}`, [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: scopeHeader, "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
       let text = ""; response.on("data", chunk => { text += chunk; });
       response.on("end", () => {
         try { accept({ status: response.statusCode!, sessionId: response.headers["mcp-session-id"] as string | undefined, value: text ? JSON.parse(text) : null }); }
@@ -401,7 +414,8 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
       });
     });
     req.on("error", reject); req.end(JSON.stringify({ jsonrpc: "2.0", ...body }));
-  });
+    });
+  };
   const first = createRunnerdCodexTransport({ ...options, prpIdentity: identity, environment: environment("token-first", identity.runId) });
   const bundles = [first];
   let secondAuthority: DurablePrpControlPlane | undefined;
@@ -409,6 +423,7 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
     await first.transport.request("thread/start", { cwd: root, model: "pinned-model", baseInstructions: "FIRST instruction grant", dynamicTools: [tool("first_tool")] });
     await first.transport.request("turn/start", { input: [{ type: "text", text: "Ask before proceeding." }] });
     await vi.waitFor(async () => expect(JSON.parse(await readFile(remoteStatePath, "utf8")).runs).toHaveLength(1));
+    const firstScopeHeader = await currentCloudScopeHeader(runtime, normalizedSessionId);
     await first.transport.request("turn/interrupt", {});
     for await (const event of first.transport.notifications()) if (event.method === "turn/completed") break;
     if (!validShutdown) {
@@ -469,6 +484,7 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
     await vi.waitFor(async () => expect(JSON.parse(await readFile(remoteStatePath, "utf8")).runs).toHaveLength(2));
     const retired = await mcp("token-first", { id: 0, method: "initialize" });
     expect(retired.status).toBe(401);
+    expect((await mcp("token-second", { id: 0, method: "initialize" }, undefined, firstScopeHeader)).status).toBe(401);
     const initialized = await mcp("token-second", { id: 0, method: "initialize" });
     const catalog = await mcp("token-second", { id: 1, method: "tools/list" }, initialized.sessionId);
     expect(catalog.value.result.tools.map((entry: { name: string }) => entry.name)).toContain("second_tool");
@@ -492,7 +508,7 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
     expect((secondAuthority!.store.state.runAttachTemplate!.provider as Record<string, unknown>).instructions).toBe(instructions);
     expect(JSON.parse(await readFile(join(stateDirectory, "runner", "codex-provider-state.json"), "utf8")).config.instructions).toBe(instructions);
     expect(creates[1].body.prompt.text).not.toContain("FIRST instruction grant");
-    expect(creates[1].body.mcpServers).toEqual([{ name: "paperclip", type: "http", url: `https://relay.example.test/mcp/native-runs/${nextIdentity.runId}`, headers: { Authorization: "Bearer token-second" } }]);
+    expect(creates[1].body.mcpServers).toEqual([{ name: "paperclip", type: "http", url: `https://relay.example.test/mcp/native-runs/${nextIdentity.runId}`, headers: { Authorization: "Bearer token-second", [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: await currentCloudScopeHeader(runtime, normalizedSessionId) } }]);
     const remote = JSON.parse(await readFile(remoteStatePath, "utf8"));
     expect(new Set(remote.runs.map((run: { id: string }) => run.id)).size).toBe(2);
     expect(remote.runs.every((run: { status: string }) => run.status === "FINISHED")).toBe(true);
