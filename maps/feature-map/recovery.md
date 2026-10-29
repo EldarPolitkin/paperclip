@@ -49,6 +49,9 @@ Agent access: [companion](../agent-access-map/recovery.md).
   provider session state.
   Native finalization deadline failures also retain the exact prepared source
   for the same stop-and-save workflow before Retry admits another executor.
+  A blocked native restart records that preservation obligation atomically with
+  its failure. PostgreSQL regressions cover exact source binding, live ownership,
+  rollback, and no replacement run or wake from file preservation.
   Retry reconstructs missing preservation for historical failures only from an
   exact prepared source without a live finalization owner.
   New messages and orphan cleanup can register missing preservation automatically
