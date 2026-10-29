@@ -1,3 +1,4 @@
+import type { InvitationEvidenceScope } from "./invitation-private-capability.js";
 import { archiveFaultClient } from "./chat-archive-fault-control.js";
 import type { ArchiveFaultTransport } from "./chat-catalog-domains/internal-archive-transport.js";
 import { prepareChatCatalogRespondent } from "./chat-catalog-respondent.js";
@@ -364,6 +365,9 @@ export function assertChatReassignment(input: {
 }
 
 export interface ChatFlowInput {
+  /** Test-host-only fixed invitation scope and actual authenticated source person. */
+  invitationScope?: InvitationEvidenceScope;
+  invitationHumanId?: string;
   /** Exact commentary privacy case only: independent GET-only owned run evidence. Never model/product authority. */
   ownedRunEvidenceObserver?: OwnedChatRunEvidenceObserver;
   /** Test-host-only owned transparent fault transport; never model state. */

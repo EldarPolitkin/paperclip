@@ -1,3 +1,5 @@
+import { writeSanitizedJson } from "./sanitized-json-writer.js";
+import { declareSelectedInvitationEvidence, bindInvitationEvidenceWriter, invitationPrivateResultEnvelope } from "./invitation-private-capability.js";
 import { withSdkCanaryPreFixture, captureSdkCanaryPreFixture } from "./sdk-canary-prefixture.js";
 import { withholdPrivateScreenshots } from "./screenshot-privacy.js";
 import { ordinaryChatCapture } from "./chat-screenshot-capture.js";
@@ -374,26 +376,6 @@ function credentialValues(): Partial<Record<CredentialName, string>> {
   );
 }
 
-async function writeSanitizedJson(
-  directory: string,
-  name: string,
-  value: unknown,
-  secrets: readonly string[],
-  signal?: AbortSignal,
-) {
-  signal?.throwIfAborted();
-  const raw = `${JSON.stringify(value)}\n`;
-  // Public API payloads may contain harmless provider-shaped fixtures or
-  // opaque generated tokens. Reject exact campaign credentials before writing,
-  // then sanitize all known shapes and assert the published JSON is clean.
-  assertSecretFree(raw, secrets, name, { includeShapes: false });
-  const safe = `${JSON.stringify(sanitizeJson(value, secrets), null, 2)}\n`;
-  const leak = findSecretLeakInJsonValues(JSON.parse(safe), secrets);
-  if (leak) throw new Error(`Secret leak in ${name}: ${leak}`);
-  signal?.throwIfAborted();
-  await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, name), safe, { encoding: "utf8", signal });
-}
 
 async function submitTaskRevision(page: Page, body: string): Promise<number> {
   const revise = page
@@ -599,6 +581,7 @@ for (const execution of executions) {
   const privateDir = path.join(privateRoot, "cases", execution.task.id);
   const resultPath = path.join(privateDir, "result.json");
   const snapshotsDir = path.join(privateDir, "snapshots");
+  const invitationScope = declareSelectedInvitationEvidence(execution.id, attempt, resolveRunnerE2ESource().sha ?? "");
   const deadlineMs = execution.task.attemptTimeoutMs[execution.environment.id];
 
   test(`${execution.id} completes through the browser and public APIs`, async ({
@@ -637,6 +620,7 @@ for (const execution of executions) {
     }
     const credentials = credentialValues();
     const secrets = trackedPrivateSecrets(normalizedSecrets([...Object.values(credentials), ...EVAL_OBSERVABILITY_SECRET_NAMES.map(name => process.env[name]), process.env.PAPERCLIP_E2E_GATEWAY_TOKEN]), execution.id);
+    if (invitationScope) bindInvitationEvidenceWriter(invitationScope, secrets);
     const privateInputs = execution.suite.id === "chat-features" ? readChatPrivateInputs(execution.id, secrets) : undefined;
     const traceConfig = evalBraintrustConfig(process.env);
     const trace = traceConfig ? new EvalAttemptTrace(traceConfig, {
@@ -1359,7 +1343,7 @@ for (const execution of executions) {
           detail: "One genuine ordinary setup hello, exact saved configuration, zero chat/task work." }];
       } else if (execution.task.flow === "agent_chat") {
         const chat = await runChatFlow({
-          privateSecrets: secrets, privateInputs,
+          privateSecrets: secrets, privateInputs, invitationScope, invitationHumanId: invitationScope ? publicMcpUserId : undefined,
           page, api, fixtures, execution, nonce, workspacePath,
           restart: () => restartChatServer(page, () => restartIsolatedPaperclipServer({ api, requestId: `chat-${nonce}`, deadlineAt: startedAtMs + deadlineMs })),
           observe: (chatIssue, chatRuns) => { issue = chatIssue; selectedRuns = chatRuns; },
@@ -3437,15 +3421,16 @@ for (const execution of executions) {
         screenshots,
         cleanup,
       };
-      const result: RunnerE2EResult = withholdPrivateScreenshots({
+      const result: RunnerE2EResult = invitationPrivateResultEnvelope(withholdPrivateScreenshots({
         ...resultWithoutBilling,
         billing: summarizeExecutionBilling(resultWithoutBilling),
-      }, { innerSecretFinding });
+      }, { innerSecretFinding }));
       if (firstTaskEvidence) {
         await writeSanitizedJson(snapshotsDir, "first-task-result-private.json", result, secrets);
       }
       await mkdir(privateDir, { recursive: true });
-      await writeFile(
+      if (invitationScope) await writeSanitizedJson(privateDir, "result.json", projectFirstTaskResult(result), secrets);
+      else await writeFile(
         resultPath,
         `${JSON.stringify(sanitizeJson(projectFirstTaskResult(result), secrets), null, 2)}\n`,
         "utf8",

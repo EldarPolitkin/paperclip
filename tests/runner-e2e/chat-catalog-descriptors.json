@@ -35,11 +35,14 @@
       "../../server/src/routes/access.ts",
       "../../server/src/routes/agents.ts",
       "../../packages/shared/src/validators/agent.ts",
-      "chat-catalog-domains/identity-invite-grant-setup.ts"
+      "chat-catalog-domains/identity-invite-grant-setup.ts",
+      "chat-catalog-domains/identity-invite-capability-binding.ts",
+      "invitation-private-capability.ts",
+      "sanitized-json-writer.ts"
     ],
     "oracleVersion": "paperclip.chat-catalog.identity.v1",
     "coverageGaps": [
-      "invitation-private-capability-evidence-projection-unresolved"
+      "invitation-shared-private-retention-hooks-and-policy-unadmitted"
     ],
     "expectedRunCount": 1,
     "turnTimeoutMs": 120000,

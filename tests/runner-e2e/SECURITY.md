@@ -628,3 +628,20 @@ unknown outside heartbeat accounting, never zero. This candidate includes only
 the focused local native-probe prerequisite from core PR18103; all candidate
 outcomes are separate from frozen39e qualification. Source acceptance is not
 permission to run the unused initial.
+
+### Invitation capability owned stage
+
+The exact OpenCode/local invitation case declares a private test-host scope before
+setup. Its existing captured-JSON writer rejects genuine credential roots, their
+encodings and unknown provider shapes before ordinary sanitization. The real
+model-created invitation is bound to same-company public invite/hash, source
+human, native run, comment, audit and visible reply anchor before the existing
+Alex acceptance/reuse checks. It is not added to the credential registry.
+Approved original capture files retain their ordinary contents; optional
+capability projection is not used to replace required evidence.
+
+This owned stage is not runnable qualification. Parent launcher/diagnostic/fallback
+retention hooks must be composed from their separately reviewed source. The
+trusted restricted-retention policy still supports eight other exact cases and
+rejects invitation. Future operator-reviewed source-policy deployment and exact
+run approval remain required; Actions artifacts are not private storage.

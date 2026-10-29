@@ -97,3 +97,16 @@ describe("invitation-only private capability prototype", () => {
     expect(invitationDiagnosticDisposition(s, { failed: false, redactedSecret: false }).publicText).not.toContain(token);
   });
 });
+
+it("rejects an unknown provider-shaped credential before a legitimate invitation projection sanitizer can mask it", () => {
+  const s = scope(); registerInvitationCapability(s, proof(), []);
+  expect(() => projectInvitationJsonForWriter(s, "api-state.json", {
+    comments: [proof().comment], opaque: { data: "sk-proj-syntheticUnknownCredential123456789" },
+  }, [])).toThrow(/Secret leak/);
+});
+it("keeps original failed result truth private on repeated zero-registration rewrites", () => {
+  const original = result(), once = invitationPrivateResultEnvelope(original), twice = invitationPrivateResultEnvelope(once);
+  expect(twice).toEqual(once); expect(twice.status).toBe("failed");
+  expect(twice.matcherResults).toEqual(original.matcherResults);
+  expect(twice.productJourney?.privacy).toBe("private");
+});

@@ -3,9 +3,9 @@ import { diagnosticSecrets } from "./private-diagnostics.js";
 import { assertSecretFree, findSecretLeakInJsonValues, sanitizeJson } from "./redaction.js";
 import type { RunnerE2EResult } from "./types.js";
 
-/** Prototype only: no runner/launcher hook is enabled by this module. The fixed
- * predeclaration must be applied to every result, including launcher fallback,
- * before the invitation case may leave its existing prerequisite hold. */
+/** Owned invitation case/writer stage. Parent launcher/fallback/private-retention
+ * integration remains a separate reviewed prerequisite; this module alone does
+ * not admit an invitation execution or widen the trusted eight-case policy. */
 export const INVITATION_PRIVATE_EXECUTION = "chat-features.runner-opencode.local.access.invite-teammate";
 const PRIVATE_LINK = "[private one-time invitation capability]";
 interface Declaration { executionId: typeof INVITATION_PRIVATE_EXECUTION; attempt: number; sourceSha: string }
@@ -16,6 +16,7 @@ interface Bound {
 }
 interface State { declaration: Declaration; bound?: Bound }
 const states = new WeakMap<InvitationEvidenceScope, State>();
+const writerScopes = new WeakMap<readonly string[], InvitationEvidenceScope>();
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 function state(scope: InvitationEvidenceScope) {
   const current = states.get(scope);
@@ -28,6 +29,27 @@ export function declareInvitationPrivateEvidence(input: Declaration): Invitation
   const scope: InvitationEvidenceScope = Object.freeze({ kind: "invitation-private-capability-scope" });
   states.set(scope, { declaration: Object.freeze({ ...input }) });
   return scope;
+}
+/** Fixed test-host scope, declared before this selected case starts setup. */
+export function declareSelectedInvitationEvidence(executionId: string, attempt: number, sourceSha: string): InvitationEvidenceScope | undefined {
+  return executionId === INVITATION_PRIVATE_EXECUTION
+    ? declareInvitationPrivateEvidence({ executionId, attempt, sourceSha }) : undefined;
+}
+export function bindInvitationEvidenceWriter(scope: InvitationEvidenceScope, roots: readonly string[]): void {
+  state(scope);
+  if (writerScopes.has(roots)) throw new Error("Invitation writer scope already bound");
+  writerScopes.set(roots, scope);
+}
+/** Raw genuine roots/encodings and unknown provider shapes must fail before the
+ * ordinary captured-JSON sanitizer. This does not project or erase originals. */
+export function assertInvitationRawEvidence(scope: InvitationEvidenceScope, name: string, value: unknown, roots: readonly string[]): void {
+  state(scope);
+  const leak = findSecretLeakInJsonValues(value, diagnosticSecrets(roots).values);
+  if (leak) throw new Error(`Secret leak in ${name}: ${leak}`);
+}
+export function assertBoundInvitationWriterEvidence(name: string, value: unknown, roots: readonly string[]): void {
+  const scope = writerScopes.get(roots);
+  if (scope) assertInvitationRawEvidence(scope, name, value, roots);
 }
 interface PublicRow { id: string; companyId: string }
 export interface InvitationCapabilityProof {
@@ -91,6 +113,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => value &&
 export function projectInvitationJsonForWriter(scope: InvitationEvidenceScope, name: string, value: unknown, realCredentialRoots: readonly string[]): unknown {
   const { bound } = state(scope);
   const raw = JSON.stringify(value);
+  assertInvitationRawEvidence(scope, name, value, realCredentialRoots);
   assertSecretFree(raw, realCredentialRoots, name, { includeShapes: false });
   assertSecretFree(raw, diagnosticSecrets(realCredentialRoots).values, name, { includeShapes: false });
   if (!bound && /(?:\/invite\/|pcp_invite_)/.test(raw)) throw new Error("Unregistered invitation capability evidence must stay private");

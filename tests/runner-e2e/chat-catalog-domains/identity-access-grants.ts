@@ -1,5 +1,7 @@
-import { prepareInvitationAgentAuthority } from "./identity-invite-grant-setup.js";
 import { createHash } from "node:crypto";
+import { INVITATION_PRIVATE_EXECUTION } from "../invitation-private-capability.js";
+import { bindActualInvitationCapability } from "./identity-invite-capability-binding.js";
+import { prepareInvitationAgentAuthority } from "./identity-invite-grant-setup.js";
 import { expect } from "@playwright/test";
 import type { ChatCatalogCase, ChatCatalogContext } from "../chat-catalog-contract.js";
 import { createAuthenticatedPerson, enrollAuthenticatedPerson } from "./identity-auth.js";
@@ -65,6 +67,8 @@ export function gradeAccessGrant(value: unknown) {
 const sources = ["chat-catalog-domains/identity-access-grants.ts", "chat-catalog-domains/identity-auth.ts", "chat-catalog-domains/identity-private-browser.ts", "chat-catalog-domains/identity-private-browser-worker.ts", "chat-catalog-domains/identity-wizard.ts", "chat-catalog-domains/identity-support.ts", "chat-catalog-domains/internal-support.ts", "chat-scenarios/access.yaml",
   "../../maps/agent-access-map/access.md", "../../server/src/routes/access.ts", "../../server/src/routes/agents.ts", "../../packages/shared/src/validators/agent.ts"];
 export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.invite-teammate", "access.manage-membership"].map(scenarioId => identityDefinition(scenarioId, async ctx => {
+  if (ctx.input.execution.id === INVITATION_PRIVATE_EXECUTION && (!ctx.input.invitationScope || !ctx.input.invitationHumanId))
+    throw new Error("Invitation requires the fixed private scope and authenticated source person before setup");
   const permissionKey = scenarioId.endsWith("invite-teammate") ? "users:invite" : "users:manage_permissions";
   const root = `/api/companies/${ctx.input.fixtures.company.id}`;
   const browser = ctx.input.page.context().browser(); if (!browser || !ctx.input.privateSecrets) throw new Error("Real authenticated access fixtures are required");
@@ -96,7 +100,7 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
     })();
     if (scenarioId.endsWith("invite-teammate")) await ctx.input.evidence("identity-explicit-agent-grant-prerequisite.json", { ...state, originalQuery: ctx.scenario.query, originalQuerySent: false, setupBlocked: false });
     const notMemberBeforeAcceptance = !(await ctx.input.api.get<{ members: Member[] }>(`${root}/members`)).members.some(row => row.principalId === alex.id);
-    const baseline = { ...state, alexId: alex.id, notMemberBeforeAcceptance, invitationsBefore: (await ctx.input.api.get<{ invites: Invitation[] }>(`${root}/invites`)).invites.map(row => row.id) };
+    const baseline = { ...state, ...(ctx.input.execution.id === INVITATION_PRIVATE_EXECUTION ? { invitationSetupRunIds: (await ctx.allRuns()).map(run => run.id) } : {}), alexId: alex.id, notMemberBeforeAcceptance, invitationsBefore: (await ctx.input.api.get<{ invites: Invitation[] }>(`${root}/invites`)).invites.map(row => row.id) };
     if (scenarioId.endsWith("manage-membership")) {
       const current = (await ctx.input.api.get<{ members: Member[] }>(`${root}/members`)).members.find(row => row.principalId === alex.id);
       if (!current) throw new Error("Real Alex membership missing before permission fixture");
@@ -115,8 +119,8 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
     return baseline;
   } catch (error) { await alex.dispose(); people.delete(ctx); throw error; }
 }, gradeAccessGrant, {
-  sourceFiles: [...sources, ...(scenarioId.endsWith("invite-teammate") ? ["chat-catalog-domains/identity-invite-grant-setup.ts"] : [])], authentication: "human-session",
-  coverageGaps: scenarioId.endsWith("invite-teammate") ? ["invitation-private-capability-evidence-projection-unresolved"] : ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
+  sourceFiles: [...sources, ...(scenarioId.endsWith("invite-teammate") ? ["chat-catalog-domains/identity-invite-grant-setup.ts", "chat-catalog-domains/identity-invite-capability-binding.ts", "invitation-private-capability.ts", "sanitized-json-writer.ts"] : [])], authentication: "human-session",
+  coverageGaps: scenarioId.endsWith("invite-teammate") ? ["invitation-shared-private-retention-hooks-and-policy-unadmitted"] : ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
   async observe(ctx, state) {
     if (scenarioId.endsWith("invite-teammate")) {
       state.invitations = (await ctx.input.api.get<{ invites: Invitation[] }>(`/api/companies/${ctx.input.fixtures.company.id}/invites`)).invites.filter(row => !(state.invitationsBefore as string[]).includes(row.id));
@@ -142,8 +146,16 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
     const invite = invites[0];
     const hrefs = o.links.map(href => new URL(href, o.origin)).filter(url => url.origin === o.origin && /^\/invite\/[^/]+$/.test(url.pathname));
     if (hrefs.length !== 1 || !ctx.input.privateSecrets) throw new Error("One actual same-origin join link is required");
-    const token = decodeURIComponent(hrefs[0]!.pathname.split("/").at(-1)!); ctx.input.privateSecrets.push(token);
-    if (invite.tokenHash !== createHash("sha256").update(token).digest("hex")) throw new Error("Join link does not match the exact public invitation hash");
+    let token: string;
+    if (ctx.input.execution.id === INVITATION_PRIVATE_EXECUTION) {
+      const setupRunIds = state.invitationSetupRunIds;
+      if (!Array.isArray(setupRunIds) || !setupRunIds.every(id => typeof id === "string") || typeof invite.tokenHash !== "string")
+        throw new Error("Invitation setup/run/hash custody is required before acceptance");
+      token = await bindActualInvitationCapability(ctx, o, { ...invite, tokenHash: invite.tokenHash }, setupRunIds);
+    } else {
+      token = decodeURIComponent(hrefs[0]!.pathname.split("/").at(-1)!); ctx.input.privateSecrets.push(token);
+      if (invite.tokenHash !== createHash("sha256").update(token).digest("hex")) throw new Error("Join link does not match the exact public invitation hash");
+    }
     const alex = people.get(ctx)![0]!;
     state.invitationCreated = structuredClone(invite); state.creationReplyNamesAlex = o.reply.includes("alex@example.test");
     state.actualJoinLinkBound = false;
