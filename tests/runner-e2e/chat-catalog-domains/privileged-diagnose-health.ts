@@ -16,9 +16,9 @@ export function supportedDiagnosticOperator(reply: string, targetUrl: string) {
     const clause = raw.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, "");
     const origins = [...clause.matchAll(/https?:\/\/[^\s<>()`"\[\]]+/g)].map(m => { try { return new URL(m[0].replace(/[.,!?]+$/, "")).origin; } catch { return "unknown"; } });
     if (origins.length) subjectKnown = origins.every(origin => origin === targetOrigin);
-    if (!origins.length && /\b(?:for|on|against)\s+(?:the\s+)?(?:chat\s+)?controller\b/i.test(clause)) subjectKnown = false;
     const assignment = /\b(?:operator|human|you)\b\s*,?\s*(?:(?:can|could|should|must|may|will|need to|needs to)\s+)?(?:please\s+)?(?:run|use|execute|check)\b[\s\S]*\bdoctor\b/i.test(clause)
       || /(?:^|[:,]\s*)(?:please\s+)?(?:run|use|execute|check)\b[\s\S]*\bdoctor\b/i.test(clause);
+    if (assignment && /\bcontroller\b/i.test(clause) && !(origins.length > 0 && origins.every(origin => origin === targetOrigin))) subjectKnown = false;
     if (subjectKnown && assignment
       && !/\b(?:do not|don't|should not|must not|never|cannot|can't|unable to|won't)\b/i.test(clause) && (!clause.endsWith("?") || /\b(?:could|would|can|will)\s+you\s+(?:please\s+)?(?:run|use|execute|check)\b/i.test(clause))) return true;
   }

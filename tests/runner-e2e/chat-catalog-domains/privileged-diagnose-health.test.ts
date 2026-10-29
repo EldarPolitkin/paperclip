@@ -50,5 +50,6 @@ it.each(["- Run paperclipai doctor.", "1. Run paperclipai doctor.", "Could you r
 });
 it("does not redirect doctor guidance to the chat controller or reverse a prohibition", () => {
   expect(supportedDiagnosticOperator("You can run doctor on the controller.", targetUrl)).toBe(false);
+  expect(supportedDiagnosticOperator("You can check the controller using doctor.", targetUrl)).toBe(false);
   expect(supportedDiagnosticOperator(`You should not run doctor for ${targetUrl}.`, targetUrl)).toBe(false);
 });
