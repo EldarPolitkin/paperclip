@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createServer } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ClientRequest, createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import { createRemoteMcpRelayToken, forwardRemoteMcpRequest, registerRemoteMcpRelay, remoteMcpRelayUrl } from "./remote-mcp-relay.js";
 
@@ -48,6 +49,42 @@ describe("native remote MCP relay", () => {
     cleanup.push(registerRemoteMcpRelay(binding));
     expect(() => registerRemoteMcpRelay(binding)).toThrow("already_registered");
     expect((await forwardRemoteMcpRequest({ runId: "bound", authorization: `Bearer ${token}`, body: "x".repeat(1_048_576) })).status).toBe(413);
+  });
+
+  it.each([false, true])("settles a timed-out Unix upstream once and closes its socket (headers sent: %s)", async headersSent => {
+    const root = await mkdtemp("/tmp/pc-relay-timeout-");
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const socketPath = join(root, "mcp.sock");
+    const sockets = new Set<Socket>();
+    let calls = 0;
+    let closed = 0;
+    const server = createServer((req, res) => {
+      calls++;
+      req.resume();
+      if (headersSent) res.write("partial response");
+    });
+    server.on("connection", socket => {
+      sockets.add(socket);
+      socket.on("close", () => { sockets.delete(socket); closed++; });
+    });
+    await new Promise<void>(resolve => server.listen(socketPath, resolve));
+    cleanup.push(() => new Promise<void>(resolve => server.close(() => resolve())));
+    cleanup.push(() => { for (const socket of sockets) socket.destroy(); });
+    const token = createRemoteMcpRelayToken();
+    cleanup.push(registerRemoteMcpRelay({ runId: "timeout", socketPath, token, expiresAt: Date.now() + 60_000, authorized: async () => true }));
+    const originalSetTimeout = ClientRequest.prototype.setTimeout;
+    const timeout = vi.spyOn(ClientRequest.prototype, "setTimeout").mockImplementation(function (this: ClientRequest, milliseconds, callback) {
+      expect(milliseconds).toBe(120_000);
+      return originalSetTimeout.call(this, 25, callback);
+    });
+    cleanup.push(() => { timeout.mockRestore(); });
+    let settled = 0;
+    const result = forwardRemoteMcpRequest({ runId: "timeout", authorization: `Bearer ${token}`, body: {} }).then(response => { settled++; return response; });
+    expect(await result).toEqual({ status: headersSent ? 502 : 503, body: Buffer.alloc(0) });
+    await vi.waitFor(() => expect(closed).toBe(1));
+    expect(calls).toBe(1);
+    expect(settled).toBe(1);
+    expect(sockets.size).toBe(0);
   });
 
   it("uses configured HTTPS only, with no authority from inbound hosts", () => {

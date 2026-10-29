@@ -11715,10 +11715,11 @@ describe("runnerd provider runtime wiring", () => {
       else process.env.PAPERCLIP_LISTEN_PORT = port;
       state.localRuntimeApiUrl.mockImplementationOnce(() => { throw new Error("local_runtime_api_listener_unavailable"); });
       const current = scopedNativeExecution(`embedded-api-origin-${host}-${port}`);
-      state.createBackend.mockReturnValueOnce({ kind: "test", openSession: vi.fn() } as never);
+      const previousBackends = state.createBackend.mock.calls.length;
       const previousDefinitions = state.toolAuthorityDefinitions.mock.calls.length;
       await expect(createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: "embedded-api-controller" }))
         .rejects.toThrow("local_runtime_api_listener_unavailable");
+      expect(state.createBackend).toHaveBeenCalledTimes(previousBackends);
       expect(state.toolAuthorityDefinitions).toHaveBeenCalledTimes(previousDefinitions);
       expect(process.env.PAPERCLIP_API_URL).toBe("http://embedded-controller.example.test");
     } finally {
