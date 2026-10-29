@@ -60,10 +60,10 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Scoped tools and credentials | local and Daytona | Native v6 credential fences passed; the first pending11 Daytona task received its exact full scoped context result and reached the intended unanswered Write | partial |
 | Ordinary setup | installed local and isolated hosted test | Ordinary connect/save/reopen/Test/run/reconnect and assigned-skill behavior remain required | unattempted |
 | Useful task | local and Daytona | Historical profile9 local files/downloads and one Daytona message passed; pending11 useful-task cells remain | partial |
-| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; pending11 first Daytona Stop attempt failed in its fixture before Stop was submitted | partial |
+| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; both pending11 Daytona attempts failed in fixture checks before Stop was submitted | partial |
 | Continuation and child loss | local and Daytona | Historical local restart/question/loss/follow-up cells passed; pending11 requires a fresh full matrix | partial |
 | Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
-| Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the remote-PID repair passed 63 module tests, nine selected assembled controls and server typecheck; final full checks remain | partial |
+| Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the recovery guard passed 65 module tests and selected assembled controls; selector regressions and targeted typechecks passed; final full checks remain | partial |
 
 Current pending11 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
 The current twenty-cell matrix has no passing cells yet. Profile9 results remain
@@ -135,6 +135,31 @@ the logical workspace separately from the physical observer lease and retains
 the original calibration fixture as version1 beside the new version2 fixture.
 The current suite is version4 and remains explicitly pending.
 
+The next controlled attempt, on `23958e5ad07e0b93b8eef098a9d0038c215bad15`,
+passed the full scoped context checkpoint proof and reached the native Write.
+It then failed before Stop because the UI check counted all visible request
+cards: the resolved context request and the pending Write. Its original
+failed/cleanup-failure grade, 49 raw files and 65 executable snapshots remain
+unchanged. Separate cleanup again verified all owned cloud resources absent and
+revoked the temporary key. This is a second failed attempt, not Stop acceptance.
+
+The corrected selector binds the exact target card to the independently verified
+native pending callback before and after lookup. It retains resolved history and
+the same card after cancellation or expiry. Ten Chromium controls reproduce the
+old failure and reject wrong targets, duplicates, changed callback identity and
+disabled decisions. The existing native/context controls and targeted typecheck
+pass; suite version4 and its promised behavior are unchanged.
+
+Fresh CI also exposed intended-local test fixtures that inserted bare PIDs without
+using the real process-metadata writer. Those fixtures now use that writer and
+retain their original recovery, contract and concurrency assertions. The separate
+unknown-owner test kept its original assertion and exposed a real guard-order
+regression: an observed run could lose its ownership warning. The minimal repair
+restores the existing observed-owner warning before the unknown-ID hold, without
+probing host PIDs or granting clearing, signaling or retry authority. Both unknown
+and remote observed-owner controls pass, as do all 65 recovery-module controls and
+the original assembled recovery cases. Real remote timeouts retain their errors.
+
 The original failed/cleanup-failure verdict and raw reports remain unchanged.
 Separate cleanup verified every owned sandbox absent and revoked the temporary
 test key. The fixture's later close error did not establish its retirement seal;
@@ -146,8 +171,8 @@ The repair changes controller recovery and qualification fixtures. It does not
 change the Kimi native patch, either closure, the tested Mac binaries, or the
 Linux image inputs. A new matrix revision must record the exact reviewed delta
 and rebuilt server identity while retaining the original artifact build SHAs.
-The next paid action is one corrected Daytona Stop cell after strict checkpoint
-bridge controls pass. Its original grade, raw files and physical cleanup must
+The next paid action is one corrected Daytona Stop cell after the rebuilt controller and
+strict checkpoint/card admission controls pass. Its original grade, raw files and physical cleanup must
 pass independent audit before the remaining nine remote and ten local cells.
 
 After all twenty cells pass, promote ordinary admission in a separate reviewable
