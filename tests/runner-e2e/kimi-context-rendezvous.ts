@@ -105,11 +105,15 @@ export function readKimiContextProof(events: readonly unknown[], publication: Ki
   const original = pendingKimiContextPermission(beforeDecision, publication);
   requireProof(original && Object.entries(original).every(([key, value]) => publication[key as keyof KimiContextPublication] === value));
   if (!authority) return undefined;
-  requireProof(authority.schema === "paperclip.e2e.kimi-context-authority.v1"
-    && ["companyId", "issueId", "agentId", "environmentId", "runId", "sessionId", "sourceInstanceId", "turnId", "actionSha256", "observerLeaseId"].every(key => (authority as unknown as Row)[key] === (publication as unknown as Row)[key])
+  requireProof(authority.schema === "paperclip.e2e.kimi-context-authority.v2"
+    && ["companyId", "issueId", "agentId", "environmentId", "runId", "sessionId", "sourceInstanceId", "turnId", "actionSha256", "observerLeaseId", "requestId", "toolCallId"].every(key => (authority as unknown as Row)[key] === (publication as unknown as Row)[key])
     && authority.inputSha256 === hash({}) && typeof authority.callId === "string" && authority.callId.length > 0
-    && [authority.inputEventSha256, authority.resultSha256, authority.correlationSha256, authority.commandSha256, authority.deliverySha256, authority.checkpointIdentitySha256].every(value => /^sha256:[a-f0-9]{64}$/.test(value))
-    && Number.isSafeInteger(authority.inputSourceSeq) && authority.inputSourceSeq > closed[0]!.event.sourceSeq
+    && [authority.inputEventSha256, authority.resultSha256, authority.correlationSha256, authority.commandSha256, authority.deliverySha256, authority.checkpointIdentitySha256, authority.requestCreatedSha256, authority.requestResolvedSha256, authority.turnStartSha256, authority.resolutionCommandSha256].every(value => /^sha256:[a-f0-9]{64}$/.test(value))
+    && typeof authority.executionWorkspaceId === "string" && authority.executionWorkspaceId.length > 0
+    && created[0]!.event.itemId === authority.controllerItemId && created[0]!.event.payload.request.itemId === authority.controllerItemId
+    && created[0]!.event.payload.request.details?.itemId === authority.controllerItemId
+    && created[0]!.event.payload.request.details?.turnId === publication.turnId
+    && Number.isSafeInteger(authority.inputSourceSeq) && authority.requestCreatedSourceSeq < authority.requestResolvedSourceSeq && authority.requestResolvedSourceSeq < authority.inputSourceSeq
     && authority.authenticatedConnectionCount > 0 && authority.highestRecordedSourceSeq >= authority.inputSourceSeq);
   const native = same.filter(x => x.event.eventType.startsWith("tool.execution.") && x.event.payload?.executionId === publication.executionId);
   const finished = native.filter(x => x.event.eventType === "tool.execution.completed");
@@ -120,11 +124,10 @@ export function readKimiContextProof(events: readonly unknown[], publication: Ki
       && (x.event.payload.namespace === null || x.event.payload.namespace === "paperclip")
       && x.event.payload.status === (index === native.length - 1 ? "completed" : "running")));
   const final = finished[0]!, output = final.event.payload;
-  requireProof(output.outputTruncated === false && typeof output.output === "string" && Buffer.byteLength(output.output) <= 64 * 1024
-    && authority.inputSourceSeq < final.event.sourceSeq);
-  const value = JSON.parse(output.output);
-  requireProof(hash(value) === authority.resultSha256 && value.company?.id === publication.companyId && value.actor?.id === publication.agentId
-    && value.activeTask?.id === publication.issueId && typeof value.activeTask.description === "string" && bytesHash(value.activeTask.description) === publication.actionSha256);
+  requireProof(final.row.seq > closed[0]!.row.seq && typeof output.output === "string" && Buffer.byteLength(output.output) <= 64 * 1024
+    && typeof output.outputTruncated === "boolean" && Number.isSafeInteger(output.outputBytes) && output.outputBytes >= Buffer.byteLength(output.output)
+    && typeof output.outputDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(output.outputDigest)
+    && (output.outputTruncated || output.outputBytes === Buffer.byteLength(output.output) && output.outputDigest === bytesHash(output.output)));
   const retained = [...created, ...closed, ...native];
   requireProof(new Set(retained.map(x => x.row.seq)).size === retained.length);
   return { ...publication, schema: "paperclip.e2e.kimi-context-proof.v1", callId: authority.callId, inputSha256: authority.inputSha256, resultSha256: authority.resultSha256, authority,
