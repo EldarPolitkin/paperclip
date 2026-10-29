@@ -41,7 +41,12 @@ separate same-Agent/session continuity requirement.
 The complete bounded checkpoint is `pnpm test:e2e:runner -- --suite cursor-cloud`.
 Each cell permits one attempt. Missing prerequisites setup-block before provider
 work. Teardown cancels observed active runs and deletes only agents named by
-run-owned persisted notices. The Stop proof includes a 15-second quiet window
+run-owned persisted notices.
+After each owned Agent deletion, cleanup polls only its exact GET for up to
+30 seconds to confirm 404, including after an ambiguous deletion reply. It does
+not repeat DELETE; authorization failures, unknown read failures and continued
+presence still fail cleanup. Earlier cleanup failures keep their original grades.
+The Stop proof includes a 15-second quiet window
 over native run status, published artifact absence, and local non-continuation;
 it does not inspect the entire remote filesystem. Attempts remain private because
 ordinary run snapshots can contain native session identifiers. Use the existing

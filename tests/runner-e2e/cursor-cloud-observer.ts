@@ -104,16 +104,24 @@ export class CursorCloudOwnedObserver {
           }
         }
         try {
-          await this.client.getAgent(agentId);
-          errors.push("absence:still-present");
-          if (uncertainReply) failed("delete", uncertainReply);
+          const deadlineAt = Date.now() + 30_000;
+          await pollUntil({ label: "owned Cloud cleanup absence", deadlineAt, intervalMs: 1_000,
+            load: async () => {
+              try {
+                await this.client.getAgent(agentId, { signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())) });
+                return false;
+              } catch (error) {
+                if (error instanceof CursorCloudClientError && error.status === 404) return true;
+                throw error;
+              }
+            },
+            accept: absent => absent,
+            retryOnError: () => false,
+          });
+          if (uncertainReply) reconciledReplies += 1;
         } catch (error) {
-          if (error instanceof CursorCloudClientError && error.status === 404) {
-            if (uncertainReply) reconciledReplies += 1;
-          } else {
-            failed("absence", error);
-            if (uncertainReply) failed("delete", uncertainReply);
-          }
+          failed("absence", error);
+          if (uncertainReply) failed("delete", uncertainReply);
         }
       }
     }

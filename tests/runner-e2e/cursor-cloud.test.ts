@@ -15,7 +15,7 @@ function notice(ownerRunId = "local-run") {
   return { runId: ownerRunId, protocolSchemaVersion: 1, payload: { prpEvent: { schema: "paperclip.prp.event.v1", schemaVersion: 1, runId: ownerRunId,
     sourceKind: "runner", eventType: "provider.notice.recorded", payload: { summary: JSON.stringify({ schema: "paperclip.cursor-cloud.remote-identity.v1", provider: "cursor_cloud", agentId, runId, ownerRunId, normalizedSessionId: "owned-session" }) } } } };
 }
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("Cursor Cloud Product E2E registration", () => {
   it("registers artifact, follow-up, active Stop and semantic planning as single-attempt explicit local cells", () => {
@@ -137,11 +137,31 @@ describe("Cloud observer evidence calibration", () => {
     return observer;
   }
   it("does not equate a deletion acknowledgment with remote absence", async () => {
+    vi.useFakeTimers();
     const observer = ownedObserver();
     vi.spyOn(observer.client, "deleteAgent").mockResolvedValue({ id: agentId });
     const lookup = vi.spyOn(observer.client, "getAgent").mockResolvedValue({ id: agentId, status: "IDLE", env: { type: "cloud" }, url: "https://cursor.com/agents/test", createdAt: "2026-10-28T00:00:00Z", updatedAt: "2026-10-28T00:00:00Z" });
-    expect((await observer.cleanup())[0]?.passed).toBe(false);
-    expect(lookup).toHaveBeenCalledWith(agentId);
+    const startedAt = Date.now();
+    const completed = observer.cleanup();
+    await vi.runAllTimersAsync();
+    expect(await completed).toMatchObject([{ passed: false }]);
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(30_000);
+    expect(lookup).toHaveBeenCalledWith(agentId, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+  it.each(["timeout", "acknowledged"])("waits for authoritative absence after an %s delete without issuing another mutation", async outcome => {
+    vi.useFakeTimers();
+    const observer = ownedObserver();
+    const remove = vi.spyOn(observer.client, "deleteAgent");
+    if (outcome === "timeout") remove.mockRejectedValue(new CursorCloudClientError("timeout"));
+    else remove.mockResolvedValue({ id: agentId });
+    const lookup = vi.spyOn(observer.client, "getAgent")
+      .mockResolvedValueOnce({ id: agentId, status: "IDLE", env: { type: "cloud" }, url: "https://cursor.com/agents/test", createdAt: "2026-10-28T00:00:00Z", updatedAt: "2026-10-28T00:00:00Z" })
+      .mockRejectedValue(new CursorCloudClientError("http_error", { status: 404 }));
+    const completed = observer.cleanup();
+    await vi.runAllTimersAsync();
+    expect(await completed).toMatchObject([{ passed: true }]);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(lookup).toHaveBeenCalledTimes(2);
   });
   it("reconciles an ambiguous deletion reply through authoritative absence", async () => {
     const observer = ownedObserver();
