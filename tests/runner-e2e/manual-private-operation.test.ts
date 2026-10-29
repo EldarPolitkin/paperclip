@@ -45,7 +45,7 @@ it("ordinary cells without sealed results still reject and operation archives ca
 });
 it("rejects true framework, wrong source/run/profile, unknown schema and invented runtime identity", async () => {
  const f = await fixture();
- for (const change of [{ frameworkStarted: true }, { runId: "456" }, { targetSha: "e".repeat(40) }, { profileVersion: 35 }, { profileDigest: "sha256:9473de6ef4baf2bd82fe8b6757239bdc160960b0a78ae6f47fa9e0996544226c" }, { runtimeFingerprint: "invented" }, { outcome: "verified" }, { extra: true }])
+ for (const change of [{ frameworkStarted: true }, { runId: "456" }, { targetSha: "e".repeat(40) }, { profileVersion: 35 }, { profileDigest: "sha256:9473de6ef4baf2bd82fe8b6757239bdc160960b0a78ae6f47fa9e0996544226c" }, { runtimeFingerprint: "invented" }, { outcome: "verified" }, { extra: true }, { capturedStreams: ["stdout"] }])
   expect(() => validatePreframeworkOperation({ ...f.operation, ...change }, f.context)).toThrow();
 });
 it("rejects mixed real framework storage on the operation path", async () => {

@@ -35,7 +35,7 @@ export function validatePreframeworkOperation(value: unknown, context: ManualPri
     || [row.buildSha256, row.provisionerSha256].some(value => value !== null && (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)))
     || !["admission", "installer", "asset-verification"].includes(row.phase) || !["not-started", "failed", "cancelled", "unknown"].includes(row.outcome)
     || !["complete", "unknown"].includes(row.outputCapture) || !["not-started", "observed-closed", "unknown"].includes(row.retirement) || !Array.isArray(row.capturedStreams)
-    || !["", "stdout,stderr"].includes(row.capturedStreams.join()) || row.phase === "admission" && row.retirement !== "not-started"
+    || !["", "stdout", "stderr", "stdout,stderr"].includes(row.capturedStreams.join()) || row.phase === "admission" && row.retirement !== "not-started"
     || row.phase !== "admission" && (row.retirement === "not-started" || !row.buildSha256 || !row.provisionerSha256 || row.capturedStreams.length !== 2)
     || row.outcome === "not-started" && row.phase !== "admission" || row.retirement === "unknown" && row.outcome !== "unknown")
     throw new Error("Invalid private preframework operation identity");

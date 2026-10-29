@@ -1431,6 +1431,7 @@ jobs:
     runs-on: ${{ needs.authorize.outputs.test_runner }}
     timeout-minutes: ${{ matrix.timeoutMinutes }}
     permissions:
+      actions: read
       contents: read
       id-token: write
     environment:

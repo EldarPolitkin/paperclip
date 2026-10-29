@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { open, realpath } from "node:fs/promises";
+import { open, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildPiSetupEnvironment } from "../../cli/src/commands/runtime.js";
@@ -94,7 +94,8 @@ export async function prepareSteeringPi(env: NodeJS.ProcessEnv) {
   const save = async () => { const bytes = Buffer.from(`${JSON.stringify(operation)}\n`); let written = 0; while (written < bytes.length) { const part = await state.write(bytes, written, bytes.length - written, written); if (!part.bytesWritten) throw new Error("Pi operation state write stopped"); written += part.bytesWritten; } await state.truncate(bytes.length); await state.sync(); };
   const controller = new AbortController(), cancel = () => controller.abort();
   const outputs: Partial<Record<"stdout" | "stderr", Awaited<ReturnType<typeof open>>>> = {};
-  let writeFailure: unknown; let writes = Promise.resolve();
+  let writeFailure: unknown; let writes = Promise.resolve(); let receiptCreated = false;
+  const discardReceipt = async () => { if (receiptCreated) { await unlink(path.join(context.root, STEERING_PI_RECEIPT)); receiptCreated = false; } };
   process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
   try {
     await save();
@@ -113,31 +114,45 @@ export async function prepareSteeringPi(env: NodeJS.ProcessEnv) {
     operation.provisionerSha256 = provisionerSha256;
     const job = await readSteeringPiJob(env);
     controller.signal.throwIfAborted();
-    for (const stream of ["stdout", "stderr"] as const) outputs[stream] = await open(path.join(context.root, `steering-pi-installer.${stream}.log`), "wx", 0o600);
-    operation.capturedStreams = ["stdout", "stderr"]; operation.phase = "installer"; operation.outcome = "unknown"; operation.retirement = "unknown"; operation.outputCapture = "unknown"; await save();
+    for (const stream of ["stdout", "stderr"] as const) {
+      controller.signal.throwIfAborted();
+      outputs[stream] = await open(path.join(context.root, `steering-pi-installer.${stream}.log`), "wx", 0o600);
+      operation.capturedStreams.push(stream); await save();
+    }
+    controller.signal.throwIfAborted();
+    operation.phase = "installer"; operation.outcome = "unknown"; operation.retirement = "unknown"; operation.outputCapture = "unknown"; await save();
     const result = await runSteeringPiInstaller({ entry, cwd: packageRoot, env, installMs: Math.min(job.installMs, job.jobDeadlineMs - Date.now() - 810_000 - DRAIN_MS), signal: controller.signal,
       write: (stream, bytes) => { writes = writes.then(async () => { await outputs[stream]!.writeFile(bytes); }).catch(error => { writeFailure = error; controller.abort(); }); },
     });
     operation.phase = "asset-verification"; operation.outcome = "failed"; operation.retirement = "observed-closed";
     await writes; if (writeFailure) throw new Error("Pi installation evidence was not retained"); operation.outputCapture = "complete"; await save();
     for (const output of Object.values(outputs)) await output!.sync();
+    controller.signal.throwIfAborted();
     if (digest(await boundedOwnedFile(entry, 64 * 1024 * 1024)) !== provisionerSha256) throw new Error("Pi provisioner changed during setup");
     const assets = await steeringPiAssetIdentity(target); requireSteeringPiTime(job.jobDeadlineMs, Date.now());
+    controller.signal.throwIfAborted();
     const { installMs: _installMs, ...clock } = job;
     const receipt: SteeringPiReceipt = { schema: "paperclip.steering-pi-assets/v1", executionId: STEERING_PI_EXECUTION,
       runId: context.runId, attempt: "1", workflowSha: context.workflowSha, targetSha: context.targetSha, ...clock,
       buildArtifact: operation.buildArtifact, buildSha256: operation.buildSha256, provisionerSha256, sourceClosureSha256: STEERING_PI_SOURCE_CLOSURE, ...result, ...assets };
-    const file = await open(path.join(context.root, STEERING_PI_RECEIPT), "wx", 0o600);
+    const file = await open(path.join(context.root, STEERING_PI_RECEIPT), "wx", 0o600); receiptCreated = true;
     try { await file.writeFile(`${JSON.stringify(receipt)}\n`); await file.sync(); } finally { await file.close(); }
+    controller.signal.throwIfAborted();
   } catch (error) {
+    await discardReceipt();
     const observed = error as { outcome?: string; retirement?: string; outputComplete?: boolean };
     await writes; if (operation.phase === "installer" && !writeFailure && observed.outputComplete === true) operation.outputCapture = "complete";
     if (operation.phase === "admission") operation.outcome = "failed";
     else if (observed.retirement === "observed-closed" && ["failed", "cancelled"].includes(observed.outcome ?? "")) {
       operation.retirement = "observed-closed"; operation.outcome = observed.outcome as "failed" | "cancelled";
     }
+    if (controller.signal.aborted && operation.retirement !== "unknown") operation.outcome = "cancelled";
     await save(); throw error;
-  } finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); await writes; for (const output of Object.values(outputs)) await output!.close(); await state.close(); }
+  } finally {
+    try { await writes; for (const output of Object.values(outputs)) await output!.close(); await state.close(); controller.signal.throwIfAborted(); }
+    catch (error) { await discardReceipt(); throw error; }
+    finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); }
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const execute = async () => {
