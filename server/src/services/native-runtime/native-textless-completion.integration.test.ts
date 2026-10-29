@@ -71,6 +71,7 @@ describe("textless OpenCode durable finalization", () => {
     const fixture = await seed(status);
     const before = (await db.select().from(issues).where(eq(issues.id, fixture.issueId)))[0]!;
     const accepted = (await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, fixture.runId)))[0]!;
+    const wakesBefore = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
     expect(await finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true }))
       .toMatchObject({ phase: "terminal_failure" });
     const issue = (await db.select().from(issues).where(eq(issues.id, fixture.issueId)))[0]!;
@@ -87,8 +88,7 @@ describe("textless OpenCode durable finalization", () => {
     expect(effects).toEqual([expect.objectContaining({ effectKind: "record_finalization_error", deliveryState: "delivered" })]);
     const recovery = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, fixture.issueId));
     expect(recovery).toEqual([expect.objectContaining({ cause: "native_textless_completion_unresolved", wakePolicy: null, status: "active" })]);
-    const wakesBefore = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
-    expect(wakesBefore.filter(wake => (wake.payload as { issueId?: string } | null)?.issueId === fixture.issueId)).toEqual([]);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toEqual(wakesBefore);
     await expect(finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true }))
       .rejects.toThrow("native_finalization_terminal_failure");
     expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toEqual(wakesBefore);
@@ -101,16 +101,15 @@ describe("textless OpenCode durable finalization", () => {
     const fixture = await seed("in_progress");
     const transaction = db.transaction.bind(db);
     let stopped = false;
+    let committedRun: typeof heartbeatRuns.$inferSelect | undefined;
+    let committedCoordinator: typeof nativeRunFinalizations.$inferSelect | undefined;
     const intercept = (async (...args: Parameters<typeof db.transaction>) => {
       const value = await transaction(...args);
       if (!stopped && value && typeof value === "object" && "decision" in value &&
           (value as { decision: { runId: string } }).decision.runId === fixture.runId) {
         stopped = true;
-        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
-        const [coordinator] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId));
-        expect(run).toMatchObject({ status: "failed", nativePhase: "terminal_failure", errorCode: "native_textless_completion_unresolved" });
-        expect(run!.finishedAt).not.toBeNull();
-        expect(coordinator).toMatchObject({ phase: "terminal_failure", nextAttemptAt: null });
+        [committedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+        [committedCoordinator] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId));
         throw new Error("caller_stopped_after_atomic_decision");
       }
       return value;
@@ -121,6 +120,9 @@ describe("textless OpenCode durable finalization", () => {
         .toMatchObject({ phase: "terminal_failure" });
     } finally { spy.mockRestore(); }
     expect(stopped).toBe(true);
+    expect(committedRun).toMatchObject({ status: "failed", nativePhase: "terminal_failure", errorCode: "native_textless_completion_unresolved" });
+    expect(committedRun!.finishedAt).not.toBeNull();
+    expect(committedCoordinator).toMatchObject({ phase: "terminal_failure", nextAttemptAt: null });
     const wakes = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
     await expect(finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded" }))
       .rejects.toThrow("native_finalization_terminal_failure");

@@ -51,7 +51,8 @@ import {
   workspaceOperations,
 } from "@paperclipai/db";
 import { classifyNativeEvidence } from "./evidence-classifier.js";
-import { parseNativeExecutionInput, type PrpIgnoredAttentionRequest, type PrpTerminalState } from "@paperclipai/paperclip-runner";
+import type { PrpIgnoredAttentionRequest, PrpTerminalState } from "@paperclipai/paperclip-runner";
+import { parseNativeExecutionInput } from "../../vendor/paperclip-runner/index.js";
 import {
   arbitrateNativeStatus,
   NATIVE_STATUS_ARBITER_POLICY_VERSION,
