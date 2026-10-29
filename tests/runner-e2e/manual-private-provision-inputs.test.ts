@@ -15,8 +15,11 @@ function state() {
     steps: { manual_cell_route: { outputs: { route: "private" } }, manual_private_verified: { outcome: "success" } },
     matrix: { executionId: id, profileId: "runner-opencode", environmentId: "local" }, env: {} as Record<string, string> };
 }
-function condition(expression: string, context: ReturnType<typeof state>) {
-  return Function("needs", "steps", "matrix", "env", "always", `return (${expression})`)(context.needs, context.steps, context.matrix, context.env, () => true);
+function condition(expression: string, context: ReturnType<typeof state>, previousStatus: "success" | "failure" | "cancelled" = "success") {
+  const gated = /\b(?:always|cancelled|failure|success)\s*\(/.test(expression) ? expression : `success() && (${expression})`;
+  return Function("needs", "steps", "matrix", "env", "always", "success", "failure", "cancelled", `return (${gated})`)(
+    context.needs, context.steps, context.matrix, context.env, () => true,
+    () => previousStatus === "success", () => previousStatus === "failure", () => previousStatus === "cancelled");
 }
 function run(step: { run: string }, env: NodeJS.ProcessEnv) {
   const body = step.run.split("<<'NODE'\n")[1]?.split("\nNODE")[0];
@@ -48,7 +51,12 @@ it("selects only the exact private local provision cell after successful private
   expect(steps.indexOf(paid)).toBeLessThan(steps.indexOf(cleanup));
   expect(steps.indexOf(cleanup)).toBeLessThan(steps.findIndex((row: { name?: string }) => row.name === "Retain complete approved manual originals with no public fallback"));
   expect(Object.values(prepare.env).some(value => String(value).includes("secrets."))).toBe(false);
-  const failed = state(); failed.env.PAPERCLIP_PROVISION_INPUT_ROOT = "owned-root"; expect(condition(cleanup.if, failed)).toBe(true);
+});
+it.each(["failure", "cancelled"] as const)("actual cleanup remains eligible after %s, while missing always is rejected", status => {
+  const failed = state(); failed.env.PAPERCLIP_PROVISION_INPUT_ROOT = "owned-root";
+  expect(condition(cleanup.if, failed, status)).toBe(true);
+  const missingAlways = cleanup.if.replace(/\balways\(\)\s*&&\s*/, "");
+  expect(condition(missingAlways, failed, status)).toBe(false);
 });
 it("actual producer writes only the fixed published pin and named key reference in private owned files", async () => {
   const f = await fixture();
