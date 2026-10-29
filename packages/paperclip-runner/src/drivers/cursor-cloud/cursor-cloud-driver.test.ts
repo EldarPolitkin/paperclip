@@ -109,6 +109,114 @@ async function rpc(path: string, body: unknown, token = "private-relay-token", s
 }
 
 describe("Cursor Cloud native driver", () => {
+  it.each([503, 429])("retries a transient observation HTTP %i without replacing work or extending its deadline", async status => {
+    let agentId = "", creates = 0, reads = 0, streams = 0;
+    const deadlines: Array<number | null> = [];
+    const now = "2026-10-28T00:00:00Z";
+    let checkpoint!: () => Promise<number | null>;
+    const json = (value: unknown, code = 200) => new Response(JSON.stringify(value), { status: code, headers: { "content-type": "application/json" } });
+    const nativeFetch: typeof globalThis.fetch = async (url, init) => {
+      const target = new URL(String(url));
+      expect(target.origin).toBe("https://controlled.cursor.test");
+      const run = { id: runId, agentId, status: "FINISHED", createdAt: now, updatedAt: now };
+      if (target.pathname === "/v1/agents" && init?.method === "POST") {
+        creates++; agentId = JSON.parse(String(init.body)).agentId;
+        return json({ agent: { id: agentId, status: "ACTIVE", env: { type: "cloud" }, url: `https://cursor.com/agents/${agentId}`, createdAt: now, updatedAt: now, latestRunId: runId }, run: { ...run, agentId, status: "RUNNING" } });
+      }
+      if (target.pathname.endsWith("/stream")) {
+        streams++;
+        return new Response('id: opaque-observation\nevent: assistant\ndata: {"text":"Working."}\n\n', { headers: { "content-type": "text/event-stream" } });
+      }
+      if (target.pathname === `/v1/agents/${agentId}/runs/${runId}`) {
+        deadlines.push(await checkpoint());
+        return ++reads === 1 ? json({ message: "temporary read failure" }, status) : json(run);
+      }
+      throw new Error("Unexpected controlled provider request");
+    };
+    const f = await fixture(new Peer(), { client: new CursorCloudClient({ apiKey: "synthetic-key", baseUrl: "https://controlled.cursor.test", fetch: nativeFetch }) });
+    checkpoint = async () => (await savedCheckpoint(f.root, f.session)).deadlineAt;
+    await f.session.startTurn({ message: { role: "user", text: "Complete despite a temporary observation failure" } });
+    await waitFor(() => f.events.some(event => event.eventType === "turn.completed"));
+    expect(creates).toBe(1); expect(reads).toBe(2); expect(streams).toBe(1);
+    expect(deadlines[0]).toBeGreaterThan(Date.now()); expect(deadlines[1]).toBe(deadlines[0]);
+    expect(f.events.filter(event => event.eventType === "turn.completed")).toHaveLength(1);
+    expect(f.events.filter(event => event.eventType === "item.delta")).toHaveLength(1);
+    expect(f.events.some(event => event.eventType === "turn.failed")).toBe(false);
+  });
+
+  it("aborts the pending observation read when Stop settles the same native run", async () => {
+    const peer = new Peer(), reading = deferred();
+    const blocked = deferred<CursorCloudRun>();
+    let readAborted = false;
+    peer.streamRun = async function* () {};
+    const original = peer.getRun.getMockImplementation()!;
+    peer.getRun.mockImplementationOnce((...args: unknown[]) => {
+      const signal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
+      signal?.addEventListener("abort", () => { readAborted = true; }, { once: true });
+      reading.resolve(); return blocked.promise;
+    });
+    const f = await fixture(peer);
+    await f.session.startTurn({ message: { role: "user", text: "Stop an observation in flight" } });
+    await reading.promise;
+    try {
+      await f.session.interrupt!();
+      await vi.waitFor(() => expect(readAborted).toBe(true), { timeout: 100 });
+      expect((await f.session.read()).phase).toBe("terminal");
+    } finally { blocked.resolve(await original()); }
+  });
+
+  it("bounds repeated transient observation reads by the original deadline", async () => {
+    const peer = new Peer(); peer.streamRun = async function* () {};
+    peer.getRun.mockRejectedValue(new CursorCloudClientError("http_error", { status: 503 }));
+    const f = await fixture(peer, { config: { schema: "paperclip.cursor-cloud.config.v1", repos: [{ url: "https://github.com/example/repo" }], timeoutMs: 1_000 }, cancelTimeoutMs: 25 });
+    await f.session.startTurn({ message: { role: "user", text: "Keep the original observation deadline" } });
+    await peer.created.promise;
+    const deadlineAt = (await savedCheckpoint(f.root, f.session)).deadlineAt;
+    try {
+      await waitFor(() => peer.getRun.mock.calls.length >= 5);
+      expect((await savedCheckpoint(f.root, f.session)).deadlineAt).toBe(deadlineAt);
+      await waitFor(() => Date.now() >= deadlineAt);
+      await vi.waitFor(async () => expect((await f.session.read()).phase).toBe("stopping"));
+      const observerSignal = (peer.getRun.mock.calls[0] as unknown[])[2] as { signal: AbortSignal };
+      const observationReads = () => peer.getRun.mock.calls.filter(call => ((call as unknown[])[2] as { signal?: AbortSignal } | undefined)?.signal === observerSignal.signal).length;
+      await vi.waitFor(() => expect(observerSignal.signal.aborted).toBe(true));
+      const reads = observationReads();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(observationReads()).toBe(reads);
+      expect(peer.createAgent).toHaveBeenCalledTimes(1); expect(peer.createRun).not.toHaveBeenCalled();
+      expect(f.events.some(event => ["turn.completed", "turn.failed", "turn.interrupted"].includes(event.eventType))).toBe(false);
+    } finally { peer.getRun.mockImplementation(async () => ({ ...peer.native! })); }
+  });
+
+  it.each(["http_error", "invalid_response"] as const)("does not retry a non-transient observation %s", async code => {
+    const peer = new Peer(); peer.streamRun = async function* () {};
+    const original = peer.getRun.getMockImplementation()!;
+    peer.getRun.mockRejectedValue(new CursorCloudClientError(code, code === "http_error" ? { status: 401 } : {}));
+    const f = await fixture(peer);
+    try {
+      await f.session.startTurn({ message: { role: "user", text: "Keep unauthorized or invalid observations fenced" } });
+      await waitFor(() => f.events.some(event => (event.payload as { code?: string }).code === "cursor_cloud_remote_state_unknown"));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(peer.getRun).toHaveBeenCalledTimes(1);
+      expect((await f.session.read()).phase).toBe("running");
+      expect(f.events.some(event => ["turn.completed", "turn.failed", "turn.interrupted"].includes(event.eventType))).toBe(false);
+    } finally { peer.getRun.mockImplementation(original); }
+  });
+
+  it("aborts observation backoff without delaying Stop or buying another run", async () => {
+    const peer = new Peer(); peer.streamRun = async function* () {};
+    peer.getRun.mockRejectedValueOnce(new CursorCloudClientError("http_error", { status: 429, retryAfterMs: 60_000 }));
+    const f = await fixture(peer);
+    await f.session.startTurn({ message: { role: "user", text: "Stop during a provider retry delay" } });
+    await waitFor(() => f.events.some(event => (event.payload as { code?: string }).code === "cursor_cloud_observation_retry"));
+    const signal = ((peer.getRun.mock.calls[0] as unknown[])[2] as { signal: AbortSignal }).signal;
+    await f.session.interrupt!();
+    expect(signal.aborted).toBe(true);
+    expect((await f.session.read()).phase).toBe("terminal");
+    expect(peer.createAgent).toHaveBeenCalledTimes(1); expect(peer.createRun).not.toHaveBeenCalled();
+    expect(f.events.filter(event => event.eventType === "turn.interrupted")).toHaveLength(1);
+  });
+
   it.each(["fresh", "follow-up"])("serializes the injected native MCP discovery and semantic controls on a %s run", async phase => {
     const requests: Array<{ path: string; body: CursorCloudCreateInput }> = [];
     const now = "2026-10-28T00:00:00Z";

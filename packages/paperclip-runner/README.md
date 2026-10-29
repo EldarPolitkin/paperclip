@@ -257,9 +257,18 @@ Cloud run and requires a terminal provider receipt. Unknown cancellation remains
 unconfirmed. Recovery reuses the saved Agent/Run and stream cursor, keeps the
 original deadline, and does not replay an ambiguous paid mutation.
 
+Checkpoint acquisition and dead-owner takeover share a private, bounded local
+acquisition guard; no network work runs while it is held. Ordinary dead main-owner
+recovery remains automatic when that guard is absent. An abandoned or
+ownership-changed acquisition guard blocks reuse and archival as ambiguous state.
+It is retained for reconciliation, never reclaimed from its age or PID alone.
+
 Cloud deliverables use `cursor-artifact:<listed relative path>` with the exact
 byte count and SHA-256. Runner downloads the provider artifact to its private
-artifact root before normal deliverable registration. A remote path never grants
+artifact root before normal deliverable registration. Fully verified bytes publish
+atomically without replacing an existing final file; existing files must match the
+claim. A crashed writer can leave an unreferenced private temporary file, which is
+retained rather than mistaken for a completed artifact. A remote path never grants
 access to the controller's project files. See the
 [local qualification record](../../doc/plans/2026-10-28-cursor-cloud-native-runner.md)
 for runnable acceptance cells and the remaining live qualification gates.

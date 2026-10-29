@@ -344,6 +344,25 @@ class CursorCloudSession implements CursorCloudSessionHandle {
     if (this.#cp.phase === "stopping" || this.#cp.deadlineAt === null || this.#cp.deadlineAt <= Date.now()) { await this.interrupt({ turnId: remote.turnId! }); return; }
     await this.#observe(remote);
   }
+  async #readObservedRun(authority: RemoteAuthority, signal: AbortSignal): Promise<CursorCloudRun | null> {
+    for (let attempt = 0; this.#currentRemote(authority) && !this.#stopping && !signal.aborted; attempt += 1) {
+      if (this.#cp.deadlineAt === null || this.#cp.deadlineAt <= Date.now()) return null;
+      try {
+        const run = await withAbort(this.#client.getRun(authority.agentId, authority.runId, { signal }), signal);
+        return this.#currentRemote(authority) && !this.#stopping && !signal.aborted ? run : null;
+      } catch (error) {
+        if (!this.#currentRemote(authority) || this.#stopping || signal.aborted) return null;
+        if (!(error instanceof CursorCloudClientError && error.retryable)) throw error;
+        if (attempt === 0) this.#emit("harness.diagnostic", { code: "cursor_cloud_observation_retry", message: "Cursor Cloud observation is temporarily unavailable; retrying the saved run within its original deadline." });
+        const remaining = (this.#cp.deadlineAt ?? 0) - Date.now();
+        if (remaining <= 0) return null;
+        const backoff = boundedPositive(this.#options.reconnectDelayMs, Math.min(250 * 2 ** Math.min(attempt, 4), 2_000));
+        await delay(Math.min(remaining, Math.max(backoff, error.retryAfterMs ?? 0)), undefined, { signal })
+          .catch(error => { if (!signal.aborted) throw error; });
+      }
+    }
+    return null;
+  }
   async #observe(authority: RemoteAuthority): Promise<void> {
     for (let attempt = 0; attempt < 4 && this.#currentRemote(authority) && !this.#stopping; attempt += 1) {
       const streamAbort = new AbortController(); this.#streamAbort = streamAbort;
@@ -359,8 +378,8 @@ class CursorCloudSession implements CursorCloudSessionHandle {
         else if (attempt === 3) throw error;
       }
       if (!this.#currentRemote(authority) || this.#stopping || streamAbort.signal.aborted) return;
-      const run = await this.#client.getRun(authority.agentId, authority.runId);
-      if (!this.#acceptRun(authority, run) || this.#stopping || streamAbort.signal.aborted) return;
+      const run = await this.#readObservedRun(authority, streamAbort.signal);
+      if (!run || !this.#acceptRun(authority, run) || this.#stopping || streamAbort.signal.aborted) return;
       if (!isCursorCloudRunActive(run.status)) { await this.#settle(authority, run); return; }
       if (attempt === 3) throw new HarnessReconciliationError("Cursor Cloud stream ended while remote work remains active");
       await delay(boundedPositive(this.#options.reconnectDelayMs, Math.min(250 * 2 ** attempt, 2_000)), undefined, { signal: streamAbort.signal });
