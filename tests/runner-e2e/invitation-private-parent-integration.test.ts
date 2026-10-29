@@ -1,5 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { cp, readFile } from "node:fs/promises";
+import { createRequire, stripTypeScriptTypes } from "node:module";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { inspectCellReportProducer, privateCellEvidenceOwner } from "./manual-private-report-assets.js";
+import { packageEvidence } from "./evidence.js";
+import { preserveOriginalFrameworkResult, readManualPrivateHandoff, sealStandardOriginalEvidence } from "./manual-private-handoff.js";
 import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +56,7 @@ it("retains exact approved private diagnostic bytes without classifying them pub
   expect(external.join("")).not.toContain(cap); expect(invitationDiagnosticDisposition(s, { failed: stream.failed(), redactedSecret: stream.redactedSecret() }).disposition).toContain("private");
 });
 it("the enrolled policy recognizes the exact invitation target but still requires its protected identity", () => {
-  expect(MANUAL_PRIVATE_EXECUTIONS).toHaveLength(10); expect(MANUAL_PRIVATE_EXECUTIONS).toContain(INVITATION_PRIVATE_EXECUTION);
+  expect(MANUAL_PRIVATE_EXECUTIONS).toHaveLength(244); expect(MANUAL_PRIVATE_EXECUTIONS).toContain(INVITATION_PRIVATE_EXECUTION);
   const identity = { workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [INVITATION_PRIVATE_EXECUTION] };
   // Pure local authorization metadata; never an actual operator record or verified preflight.
   const row = { ...identity, protocol: MANUAL_PRIVATE_PROTOCOL, launchSha256: "c".repeat(64) };
@@ -76,5 +83,83 @@ it("the refreshed shared handoff keeps report static assets out of ordinary invi
     await writeFile(file, readFileSync(new URL("../../ui/public/fonts/InterVariable.woff2", import.meta.url)));
     const context: ManualPrivateHandoff = { root, protocol: MANUAL_PRIVATE_PROTOCOL, private: true, workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [INVITATION_PRIVATE_EXECUTION] };
     await expect(sealManualResultEvidence(context, [], source)).rejects.toThrow("Unsupported packaged evidence carrier");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+// The copy function is executed from its actual target source. This covers copy
+// behavior and package arguments, not the complete runAttempt lifecycle.
+function actualTargetCopy() {
+  const source = readFileSync(new URL("launch.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function copySharedEvidence("), end = source.indexOf("\nasync function runAttempt(", start);
+  if (start < 0 || end < start) throw new Error("Actual target copier missing");
+  const body = stripTypeScriptTypes(source.slice(start, end));
+  return new Function("cp", "path", `${body};return copySharedEvidence;`)(cp, path) as (from: string, to: string) => Promise<void>;
+}
+it.each(["valid", "tampered-static", "foreign-owner", "unknown-nested"])("current invitation private pipeline preserves %s report authority and originals", async kind => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "synthetic-invite-current-pipeline-")));
+  try {
+    const reporter = path.join(root, "reporter"), tests = path.join(root, "node-only");
+    await mkdir(tests); await mkdir(reporter);
+    const require = createRequire(import.meta.url), pkg = require.resolve("@playwright/test/package.json"), entry = require.resolve("@playwright/test");
+    await writeFile(path.join(tests, "failure.spec.cjs"), `const {test,expect}=require(${JSON.stringify(entry)});test('synthetic Node-only failure',async()=>{expect('wrong').toBe('expected');});`);
+    const config = path.join(tests, "isolated.config.cjs");
+    await writeFile(config, `module.exports=${JSON.stringify({ testDir: tests, testMatch: "failure.spec.cjs", workers: 1, outputDir: path.join(reporter, "playwright-output"), use: { trace: "retain-on-failure" }, reporter: [["html", { outputFolder: path.join(reporter, "html-report"), open: "never" }], ["junit", { outputFile: path.join(reporter, "junit.xml") }], ["blob", { outputDir: path.join(reporter, "blob-report") }]] })};`);
+    const failure = await promisify(execFile)(process.execPath, [path.join(path.dirname(pkg), "cli.js"), "test", "--config", config], { cwd: tests, timeout: 30_000, maxBuffer: 1024*1024, env: { PATH: process.env.PATH, CI: "1", NODE_OPTIONS: "", NODE_PATH: "", PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" } }).then(() => false, error => { expect(error.code).toBe(1); return true; });
+    expect(failure).toBe(true);
+    const id = INVITATION_PRIVATE_EXECUTION, scenario = "access.invite-teammate", cell = path.join(root, "capture/cases", scenario);
+    await mkdir(cell, { recursive: true }); await actualTargetCopy()(reporter, cell);
+    await writeFile(path.join(cell, "result.json"), JSON.stringify({ status: "failed", failureClass: "assertion", cleanup: "passed" }));
+    const context: ManualPrivateHandoff = { root, private: true, protocol: MANUAL_PRIVATE_PROTOCOL, workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [id], cellReportProducer: await inspectCellReportProducer() };
+    const owner = await privateCellEvidenceOwner(context, id), prefix = `gha-123-1-${id}/chat-features/runner-opencode/local/${scenario}/attempt-1`, upload = path.join(root, "results", prefix);
+    if (kind === "tampered-static") await writeFile(path.join(cell, "html-report/trace/index.html"), "tampered static HTML");
+    if (kind === "foreign-owner") { await mkdir(path.join(cell, "html-report/foreign/html-report/trace"), { recursive: true }); await cp(path.join(cell, "html-report/trace/index.html"), path.join(cell, "html-report/foreign/html-report/trace/index.html")); }
+    if (kind === "unknown-nested") { await mkdir(path.join(cell, "snapshots/node_modules"), { recursive: true }); await writeFile(path.join(cell, "snapshots/node_modules/unknown.bin"), "unapproved"); }
+    if (kind !== "valid") {
+      await expect(packageEvidence({ privateDir: cell, uploadDir: upload, secrets: [], expectPassScreenshot: false, privateCell: { owner, layout: "original" } })).rejects.toThrow(/canonical|owner|carrier|trace asset/); return;
+    }
+    await preserveOriginalFrameworkResult(cell);
+    const evidence = await packageEvidence({ privateDir: cell, uploadDir: upload, secrets: [], expectPassScreenshot: false, privateCell: { owner, layout: "original" } });
+    expect(evidence.leaks).toEqual([]); expect(evidence.files).toContain("html-report/trace/playwright-logo.svg"); expect(evidence.files.some(name => name.endsWith(".ttf"))).toBe(true);
+    const original = await sealStandardOriginalEvidence({ context, executionId: id, source: cell, evidence, secrets: [], expectPassScreenshot: false });
+    const final = await sealManualResultEvidence(context, []);
+    expect(original.complete).toBe(true); expect(final.complete).toBe(true);
+    const saved = JSON.parse(await readFile(path.join(root, "sealed-results/html-report", prefix, "snapshots/manual-original-framework-result.json"), "utf8"));
+    expect(saved).toEqual({ status: "failed", failureClass: "assertion", cleanup: "passed" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 40_000);
+it("current invitation producer mismatch rejects the actual preflight reader before host setup", async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "synthetic-invite-current-preflight-")));
+  try {
+    const file = path.join(root, "preflight.json"), producer = await inspectCellReportProducer();
+    producer.staticManifestSha256 = "0".repeat(64);
+    await writeFile(file, JSON.stringify({ root, private: true, status: "verified", protocol: MANUAL_PRIVATE_PROTOCOL, workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [INVITATION_PRIVATE_EXECUTION], cellReportProducer: producer }), { mode: 0o600 });
+    await expect(readManualPrivateHandoff({ PAPERCLIP_RUNNER_E2E_PRIVATE_PREFLIGHT: file, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: "a".repeat(40), PAPERCLIP_RUNNER_E2E_SOURCE_SHA: "b".repeat(40), RUNNER_TEMP: path.dirname(root) }, [INVITATION_PRIVATE_EXECUTION])).rejects.toThrow("producer differs");
+    expect(startup.reached).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it.each([0, 1, 2])("actual selected package call %s validates its full producer owner before packaging", async selected => {
+  const source = readFileSync(new URL("launch.ts", import.meta.url), "utf8"), calls: string[] = [];
+  let cursor = 0;
+  while ((cursor = source.indexOf("await packageEvidence(", cursor)) >= 0) {
+    const start = cursor, open = source.indexOf("(", start); let depth = 1, end = open + 1;
+    while (depth && end < source.length) { if (source[end] === "(") depth++; else if (source[end] === ")") depth--; end++; }
+    if (depth) throw new Error("Unclosed actual package call");
+    calls.push(source.slice(start, end)); cursor = end;
+  }
+  if (calls.length !== 3) throw new Error("Unexpected selected package call count");
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "synthetic-invite-package-caller-")));
+  try {
+    const context: ManualPrivateHandoff = { root, private: true, protocol: MANUAL_PRIVATE_PROTOCOL, workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [INVITATION_PRIVATE_EXECUTION], cellReportProducer: await inspectCellReportProducer() };
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const call = new AsyncFunction("packageEvidence", "privateCellEvidenceOwner", "manualPrivateHandoff", "candidate", "casePrivateDir", "uploadDir", "credentials", "result", "validation", "attemptSecrets", "original", `${stripTypeScriptTypes(`async function selectedPackageCall(){return ${calls[selected]};}`)};return selectedPackageCall();`);
+    const packager = vi.fn(async (value: unknown) => value), directory = path.join(root, "capture"); await mkdir(directory);
+    const args = [packager, privateCellEvidenceOwner, context, { id: INVITATION_PRIVATE_EXECUTION }, directory, path.join(root, "upload"), [], { status: "failed" }, path.join(root, "validation"), [], { status: "failed" }];
+    const options = await call(...args);
+    expect(options.privateCell).toMatchObject({ layout: "original", owner: { root, executionId: INVITATION_PRIVATE_EXECUTION, producer: context.cellReportProducer } });
+    expect(options.expectPassScreenshot).toBe(false); expect(packager).toHaveBeenCalledOnce();
+    packager.mockClear(); context.cellReportProducer = { ...context.cellReportProducer!, staticManifestSha256: "0".repeat(64) };
+    await expect(call(...args)).rejects.toThrow("producer differs"); expect(packager).not.toHaveBeenCalled();
   } finally { await rm(root, { recursive: true, force: true }); }
 });

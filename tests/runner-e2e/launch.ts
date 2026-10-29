@@ -48,6 +48,7 @@ import {
 import { isImmutableDaytonaImage, runnerMatrix } from "./catalog.js";
 import { renderRunnerE2EDashboard } from "./dashboard.js";
 import { packageEvidence } from "./evidence.js";
+import { privateCellEvidenceOwner } from "./manual-private-report-assets.js";
 import { readManualPrivateHandoff, sealManualResultEvidence, preserveOriginalFrameworkResult, sealStandardOriginalEvidence, type ManualPrivateHandoff } from "./manual-private-handoff.js";
 import { requiresPrivateManualEvidence, manualCellKind } from "./manual-private-retention.js";
 import { classifyFailure } from "./failure-classifier.js";
@@ -948,6 +949,7 @@ async function runAttempt(input: {
         uploadDir,
         secrets: credentials,
         expectPassScreenshot: result.status === "passed",
+        ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}),
       });
       const originalEvidence = evidence, originalFeaturePassed = result.status === "passed";
       if (manualPrivateHandoff) originalPackageScans.set(candidate.id, { evidence: originalEvidence, passed: originalFeaturePassed });
@@ -975,6 +977,7 @@ async function runAttempt(input: {
           uploadDir,
           secrets: credentials,
           expectPassScreenshot: false,
+          ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}),
         });
       }
       await sealManualOriginal(candidate, casePrivateDir, originalEvidence, originalFeaturePassed);
@@ -1010,7 +1013,7 @@ async function runAttempt(input: {
           await copySharedEvidence(privateDir, casePrivateDir);
           await preserveManualOriginal(candidate.id, casePrivateDir);
           const previousScan = originalPackageScans.get(candidate.id);
-          const evidence = previousScan?.evidence ?? await packageEvidence({ privateDir: casePrivateDir, uploadDir: validation, secrets: attemptSecrets, expectPassScreenshot: original.status === "passed" });
+          const evidence = previousScan?.evidence ?? await packageEvidence({ privateDir: casePrivateDir, uploadDir: validation, secrets: attemptSecrets, expectPassScreenshot: original.status === "passed", ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}) });
           await sealManualOriginal(candidate, casePrivateDir, evidence, previousScan?.passed ?? original.status === "passed");
         } catch { manualEvidenceFailure = new Error("Private abnormal evidence could not be sealed; no public fallback"); }
         finally { await rm(validation, { recursive: true, force: true }); }
