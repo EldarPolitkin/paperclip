@@ -84,14 +84,14 @@ function secondaryClaudeState(executionId = hireClaude) {
   secrets:{ANTHROPIC_API_KEY:"synthetic-secondary-claude-key"}, env:{},
  };
 }
-function producer(name:string, marker:string) {
+function producer(name:string) {
  const run=step("test_manual_private",name).run as string;
- const body=run.split(`// BEGIN_${marker}\n`)[1]?.split(`// END_${marker}`)[0];
+ const body=run.split("<<'NODE'\n")[1]?.split("\nNODE")[0];
  if(!body)throw new Error("Actual workflow producer is missing");
  return body;
 }
-function runProducer(name:string,marker:string,env:NodeJS.ProcessEnv) {
- return spawnSync(process.execPath,["--input-type=module","-e",producer(name,marker)],{
+function runProducer(name:string,env:NodeJS.ProcessEnv) {
+ return spawnSync(process.execPath,["--input-type=module","-e",producer(name)],{
   encoding:"utf8",env:{PATH:process.env.PATH,...env},
  });
 }
@@ -153,29 +153,29 @@ it("keeps Claude preparation before keys and cleans private config before any ev
 it("the actual installer metadata producer binds canonical package bytes without running the CLI",async()=>{
  const f=await claudeProducerFixture();
  try{
-  const result=runProducer("Install pinned Claude CLI for setup verification","SECONDARY_CLAUDE_IDENTITY",f.identityEnv);
+  const result=runProducer("Install pinned Claude CLI for setup verification",f.identityEnv);
   expect(result.status,result.stderr).toBe(0);
   expect(envLines(await readFile(f.output,"utf8"))).toEqual({executable:f.executable,version:"2.1.277",executable_sha256:f.inputsEnv.CLAUDE_CLI_SHA256});
   await writeFile(f.output,"");
   for(const patch of[{CLAUDE_CLI_VERSION:"2.1.278 (Claude Code)"},{CLAUDE_CLI_VERSION:"2.1.2779 (Claude Code)"},{CLAUDE_CLI_COMMAND:process.execPath}]){
-   const wrong=runProducer("Install pinned Claude CLI for setup verification","SECONDARY_CLAUDE_IDENTITY",{...f.identityEnv,...patch});
+   const wrong=runProducer("Install pinned Claude CLI for setup verification",{...f.identityEnv,...patch});
    expect(wrong.status).toBe(1);expect(await readFile(f.output,"utf8")).toBe("");
   }
   await writeFile(path.join(f.packageRoot,"package.json"),JSON.stringify({name:"unrelated-package",version:"2.1.277"}));
-  expect(runProducer("Install pinned Claude CLI for setup verification","SECONDARY_CLAUDE_IDENTITY",f.identityEnv).status).toBe(1);
+  expect(runProducer("Install pinned Claude CLI for setup verification",f.identityEnv).status).toBe(1);
  }finally{await rm(f.root,{recursive:true,force:true});}
 });
 
 it("the actual hiring producer writes only declared logical refs and a real prepared executable",async()=>{
  const f=await claudeProducerFixture();
  try{
-  const result=runProducer("Prepare selected Claude hiring inputs","SECONDARY_CLAUDE_INPUTS",f.inputsEnv);expect(result.status,result.stderr).toBe(0);
+  const result=runProducer("Prepare selected Claude hiring inputs",f.inputsEnv);expect(result.status,result.stderr).toBe(0);
   const env=envLines(await readFile(f.githubEnv,"utf8")),config=JSON.parse(await readFile(env.PAPERCLIP_CHAT_CATALOG_EXTERNAL_CONFIG!,"utf8"));
   expect(config).toEqual({schemaVersion:1,providers:{claude:{disposable:true,resourceIds:["fixture.environment"],credentialEnv:[],prerequisites:{targetRef:"fixture.environment",harnessExecutable:f.executable,model:"claude-sonnet-4-6",accountBindingRef:"selected.ANTHROPIC_API_KEY"}}}});
   expect(claudeModels.some(model=>model.id===config.providers.claude.prerequisites.model)).toBe(true);
   expect((await stat(env.PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT!)).mode&0o777).toBe(0o700);
   expect((await stat(env.PAPERCLIP_CHAT_CATALOG_EXTERNAL_CONFIG!)).mode&0o777).toBe(0o600);
-  const cleanup=runProducer("Remove selected Claude hiring input files","SECONDARY_CLAUDE_CLEANUP",{...f.inputsEnv,...env});expect(cleanup.status,cleanup.stderr).toBe(0);
+  const cleanup=runProducer("Remove selected Claude hiring input files",{...f.inputsEnv,...env});expect(cleanup.status,cleanup.stderr).toBe(0);
   await expect(access(env.PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT!)).rejects.toMatchObject({code:"ENOENT"});
   expect(envLines(await readFile(f.githubEnv,"utf8")).PAPERCLIP_CHAT_CATALOG_EXTERNAL_CONFIG).toBe("");
  }finally{await rm(f.root,{recursive:true,force:true});}
@@ -185,13 +185,13 @@ it("rejects foreign selection, changed bytes and unsafe cleanup ownership in the
  const f=await claudeProducerFixture();
  try{
   for(const patch of[{SELECTED_EXECUTION_ID:chooseClaude},{CLAUDE_CLI_SHA256:"0".repeat(64)},{CLAUDE_CLI_VERSION:"2.1.278"}]){
-   expect(runProducer("Prepare selected Claude hiring inputs","SECONDARY_CLAUDE_INPUTS",{...f.inputsEnv,...patch}).status).toBe(1);
+   expect(runProducer("Prepare selected Claude hiring inputs",{...f.inputsEnv,...patch}).status).toBe(1);
    expect(await readFile(f.githubEnv,"utf8")).toBe("");
   }
   const link=path.join(f.root,"link");await symlink(f.executable,link);
-  expect(runProducer("Prepare selected Claude hiring inputs","SECONDARY_CLAUDE_INPUTS",{...f.inputsEnv,CLAUDE_CLI_COMMAND:link}).status).toBe(1);
+  expect(runProducer("Prepare selected Claude hiring inputs",{...f.inputsEnv,CLAUDE_CLI_COMMAND:link}).status).toBe(1);
   const foreign=path.join(f.root,"unrelated");await mkdir(foreign);
-  expect(runProducer("Remove selected Claude hiring input files","SECONDARY_CLAUDE_CLEANUP",{...f.inputsEnv,PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT:foreign}).status).toBe(1);
+  expect(runProducer("Remove selected Claude hiring input files",{...f.inputsEnv,PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT:foreign}).status).toBe(1);
   expect((await stat(foreign)).isDirectory()).toBe(true);
  }finally{await rm(f.root,{recursive:true,force:true});}
 });

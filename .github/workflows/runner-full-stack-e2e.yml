@@ -1174,7 +1174,6 @@ jobs:
             CLAUDE_CLI_VERSION="$version"
             export CLAUDE_CLI_PACKAGE_ROOT CLAUDE_CLI_COMMAND CLAUDE_CLI_VERSION
             node --input-type=module <<'NODE'
-          // BEGIN_SECONDARY_CLAUDE_IDENTITY
           import fs from "node:fs";
           import path from "node:path";
           import { createHash } from "node:crypto";
@@ -1190,7 +1189,6 @@ jobs:
             const digest = createHash("sha256").update(fs.readFileSync(executable)).digest("hex");
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `executable=${executable}\nversion=${manifest.version}\nexecutable_sha256=${digest}\n`);
           } catch { process.stderr.write("Selected Claude executable preparation failed; details withheld\n"); process.exitCode = 1; }
-          // END_SECONDARY_CLAUDE_IDENTITY
           NODE
           fi
 
@@ -1337,7 +1335,6 @@ jobs:
           CLAUDE_CLI_SHA256: ${{ steps.claude_cli.outputs.executable_sha256 }}
         run: |
           node --input-type=module <<'NODE'
-          // BEGIN_SECONDARY_CLAUDE_INPUTS
           import fs from "node:fs";
           import path from "node:path";
           import { createHash } from "node:crypto";
@@ -1348,7 +1345,6 @@ jobs:
             if (!path.isAbsolute(command) || fs.realpathSync(command) !== command || !info.isFile() || info.isSymbolicLink()
               || info.size > 16777216 || /[\r\n]/.test(command) || !/^[a-f0-9]{64}$/.test(process.env.CLAUDE_CLI_SHA256 ?? "")
               || createHash("sha256").update(fs.readFileSync(command)).digest("hex") !== process.env.CLAUDE_CLI_SHA256) throw new Error();
-            // These are declared reference selectors, not prefilled environment/account IDs.
             const config = { schemaVersion: 1, providers: { claude: { disposable: true,
               resourceIds: ["fixture.environment"], credentialEnv: [], prerequisites: {
                 targetRef: "fixture.environment", harnessExecutable: command, model: "claude-sonnet-4-6",
@@ -1366,7 +1362,6 @@ jobs:
             if (directory) fs.rmSync(directory, { recursive: true, force: true });
             process.stderr.write("Selected Claude hiring input preparation failed; details withheld\n"); process.exitCode = 1;
           }
-          // END_SECONDARY_CLAUDE_INPUTS
           NODE
 
       - name: Run paid cell
@@ -1399,7 +1394,6 @@ jobs:
         if: always() && env.PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT != ''
         run: |
           node --input-type=module <<'NODE'
-          // BEGIN_SECONDARY_CLAUDE_CLEANUP
           import fs from "node:fs";
           import path from "node:path";
           try {
@@ -1411,7 +1405,6 @@ jobs:
             fs.rmSync(root, { recursive: true, force: true });
             fs.appendFileSync(process.env.GITHUB_ENV, "PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT=\nPAPERCLIP_CHAT_CATALOG_EXTERNAL_CONFIG=\n");
           } catch { process.stderr.write("Selected Claude hiring input cleanup failed; details withheld\n"); process.exitCode = 1; }
-          // END_SECONDARY_CLAUDE_CLEANUP
           NODE
 
       - name: Stage bounded campaign evidence
