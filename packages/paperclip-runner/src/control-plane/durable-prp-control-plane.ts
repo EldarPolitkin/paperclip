@@ -3914,6 +3914,7 @@ const runnerExplicitProviderEnvironmentKeys = [
   "CODEX_API_KEY",
   "PAPERCLIP_ACPX_CODEX_AUTH_JSON_SECRET",
   "PAPERCLIP_ACPX_GROK_AUTH_JSON_SECRET",
+  "PAPERCLIP_ACPX_ANTIGRAVITY_AUTH_JSON_SECRET",
   "XAI_API_KEY",
   "AWS_REGION",
   "AWS_DEFAULT_REGION",
@@ -4022,6 +4023,7 @@ export function spawnRunner(options: {
   runnerVersion: string;
   runnerDigest: string;
   acpxLaunchProfile?: {
+    candidateAdmission?: import("../drivers/acpx/candidate-admission.js").AcpxCandidateStartupAdmission;
     authorityDigest: string;
     command: string;
     commandSha256: string;
@@ -4043,6 +4045,23 @@ export function spawnRunner(options: {
   processLauncher?: (spec: RunnerProcessLaunchSpec) => RunnerProcessHandle;
   diagnosticsDirectory?: string;
 }): RunnerProcessHandle {
+  for (const value of [options.maxRuntimeMs, options.maxLifetimeMs]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new Error("runner_process_lifetime_invalid");
+  }
+  const launchedAt = Date.now();
+  const candidateExpiresAt = options.acpxLaunchProfile?.candidateAdmission?.expiresAt;
+  const lifetimeDeadlines = [
+    ...(options.maxLifetimeMs && options.maxLifetimeMs > 0 ? [launchedAt + options.maxLifetimeMs] : []),
+    ...(candidateExpiresAt === undefined ? [] : [candidateExpiresAt]),
+  ];
+  const lifetimeDeadline = lifetimeDeadlines.length ? Math.min(...lifetimeDeadlines) : undefined;
+  if (lifetimeDeadline !== undefined && lifetimeDeadline <= launchedAt) throw new Error("runner_process_lifetime_expired");
+  const runtimeBounds = [
+    ...(options.maxRuntimeMs && options.maxRuntimeMs > 0 ? [options.maxRuntimeMs] : []),
+    ...(lifetimeDeadline === undefined ? [] : [lifetimeDeadline - launchedAt]),
+  ];
+  const maxRuntimeMs = runtimeBounds.length ? Math.min(...runtimeBounds)
+    : options.maxRuntimeMs ?? (options.maxLifetimeMs === undefined ? undefined : 0);
   const connection =
     options.connection ??
     (options.connectUrl
@@ -4100,6 +4119,7 @@ export function spawnRunner(options: {
           options.acpxLaunchProfile.sidecarScript,
           "--acpx-sidecar-script-sha256",
           options.acpxLaunchProfile.sidecarScriptSha256,
+          ...(options.acpxLaunchProfile.candidateAdmission ? ["--acpx-candidate-admission-json", JSON.stringify(options.acpxLaunchProfile.candidateAdmission)] : []),
         ]
       : []),
     ...(options.cursorCloudLaunchProfile ? [
@@ -4135,11 +4155,9 @@ export function spawnRunner(options: {
     "--reconnect-delay-ms",
     "250",
   ];
-  if (options.maxLifetimeMs !== undefined) {
-    args.push("--max-lifetime-ms", String(options.maxLifetimeMs));
-  } else if (options.maxRuntimeMs !== undefined) {
-    args.push("--max-runtime-ms", String(options.maxRuntimeMs));
-  }
+  // The daemon enforces its total process deadline through max-runtime-ms.
+  // Keep the same bounded value in structured launches for external owners.
+  if (maxRuntimeMs !== undefined) args.push("--max-runtime-ms", String(maxRuntimeMs));
   if (options.reconnectGraceMs !== undefined) {
     args.push("--reconnect-grace-ms", String(options.reconnectGraceMs));
   }
@@ -4166,7 +4184,9 @@ export function spawnRunner(options: {
       if (handle.isExitConfirmed?.() === false) {
         throw new Error("runner_process_termination_unconfirmed");
       }
-      return spawnRunner({ ...options, ticket });
+      if (lifetimeDeadline !== undefined && lifetimeDeadline <= Date.now()) throw new Error("runner_process_lifetime_expired");
+      return spawnRunner({ ...options, ticket,
+        ...(lifetimeDeadline === undefined ? {} : { maxLifetimeMs: lifetimeDeadline - Date.now() }) });
     },
   });
   if (options.processLauncher !== undefined) {
@@ -4176,7 +4196,7 @@ export function spawnRunner(options: {
           identity: options.identity, ticket: options.ticket, connection, stateDirectory: options.stateDirectory,
           runnerVersion: options.runnerVersion, runnerDigest: options.runnerDigest,
           maxOutboxBytes: options.maxOutboxBytes, p0ReserveBytes: options.p0ReserveBytes,
-          maxRuntimeMs: options.maxRuntimeMs, maxLifetimeMs: options.maxLifetimeMs,
+          maxRuntimeMs, maxLifetimeMs: lifetimeDeadline === undefined ? options.maxLifetimeMs : maxRuntimeMs,
           reconnectGraceMs: options.reconnectGraceMs, lifecyclePolicy: options.lifecyclePolicy,
           acpxLaunchProfile: options.acpxLaunchProfile, opencodeLaunchProfile: options.opencodeLaunchProfile, cursorCloudLaunchProfile: options.cursorCloudLaunchProfile,
           diagnosticsDirectory: options.diagnosticsDirectory,

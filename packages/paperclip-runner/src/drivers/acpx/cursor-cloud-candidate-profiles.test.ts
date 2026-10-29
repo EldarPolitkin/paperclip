@@ -75,11 +75,63 @@ describe("branch-only Cursor Cloud identities from 157d4119db48eff9de040d3951755
 
 describe("retained Cursor Cloud core profile before semantic planning", () => {
   it("keeps version 82 byte-identical and decodable without admitting its old launch identity", async () => {
-    const retained = bytes("copilot-profile-v82-identity.json");
+    const retained = bytes("copilot-profile-v82-cursor-cloud-candidate-historical-identity.json");
     expect(createHash("sha256").update(retained).digest("hex")).toBe("350564aceac59083b3009c5915c709549f0a257b0d828314184c28cded33e6a6");
     const identity = JSON.parse(retained.toString("utf8"));
     expect(isSupportedAcpxProfileVersion("copilot", 82)).toBe(true);
     expect(identity.commandDigest).not.toBe(QUALIFIED_ACPX_PROFILES.copilot.commandDigest);
     await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot, agentProfileVersion: 82, commandDigest: identity.commandDigest })).rejects.toThrow("exact pinned");
+  });
+});
+
+
+describe("published identities from pinned master 54cc522e864291564bc37ddc6004bfa558c02644", () => {
+  it.each([
+  [
+    "copilot-profile-v82-identity.json",
+    "fe04407493a608d4204403d04ef06c79904a206f3c57547a11612c068a55b99f"
+  ],
+  [
+    "copilot-profile-v83-identity.json",
+    "31d024e3870f8a7278939f6f1186e2ec6d2bc331d7a89213aceae88c04b40654"
+  ],
+  [
+    "copilot-profile-v84-identity.json",
+    "6fe83e309911eb83f8b6e817f0b535329b02fab41ef7749d363f4562af19d4fe"
+  ],
+  [
+    "grok-profile-v13-identity.json",
+    "374993b170ea181470f6bc606ec568eb347f987e65338d8b980356d97c97b98b"
+  ]
+] as const)("preserves published %s byte-identical", (name, checksum) => {
+    expect(createHash("sha256").update(bytes(name)).digest("hex")).toBe(checksum);
+  });
+});
+
+describe("qualified branch-only identities from 0d968b005be9063b8c3806ecef5f75239dc5ce5b", () => {
+  it.each([
+  [
+    "copilot-profile-v82-cursor-cloud-candidate-historical-identity.json",
+    "350564aceac59083b3009c5915c709549f0a257b0d828314184c28cded33e6a6"
+  ],
+  [
+    "copilot-profile-v83-cursor-cloud-candidate-historical-identity.json",
+    "9b4fa60409fc8e0f85ec61ed6378188ccaeb806684aea3b05ae6cd0c451bb364"
+  ],
+  [
+    "grok-profile-v13-cursor-cloud-candidate-historical-identity.json",
+    "2db8e1be2c019e88cf089c2ae344c48d5e67c67b2ff72b2e3a21ff9657306261"
+  ]
+] as const)("retains %s as read-only qualification history", async (name, checksum) => {
+    const retained = bytes(name);
+    expect(createHash("sha256").update(retained).digest("hex")).toBe(checksum);
+    const identity = JSON.parse(retained.toString("utf8"));
+    const agent = name.startsWith("copilot") ? "copilot" : "grok";
+    expect(isSupportedAcpxProfileVersion(agent, identity.declaration.agentProfileVersion)).toBe(true);
+    expect(identity.commandDigest).not.toBe(QUALIFIED_ACPX_PROFILES[agent].commandDigest);
+    if (agent === "copilot") {
+      await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+        agentProfileVersion: identity.declaration.agentProfileVersion, commandDigest: identity.commandDigest })).rejects.toThrow("exact pinned");
+    }
   });
 });
