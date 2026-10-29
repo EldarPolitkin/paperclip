@@ -2513,7 +2513,10 @@ for (const execution of executions) {
         await writeSanitizedJson(snapshotsDir, "downloaded-response-proof.json", downloadedResponseProof, secrets);
       }
       if (cursorCloudObserver) {
-        const checks = await cursorCloudObserver.assertContinuity(execution.task.expectedRunCount);
+        const revisedInteraction = record(planLifecycleEvidence?.revisedInteraction);
+        const checks = execution.task.flow === "plan_revision_acceptance"
+          ? await cursorCloudObserver.assertPlanTransitions(selectedRuns.map(run => run.id), typeof revisedInteraction.id === "string" ? revisedInteraction.id : null)
+          : await cursorCloudObserver.assertContinuity(execution.task.expectedRunCount);
         await writeSanitizedJson(snapshotsDir, "cursor-cloud-provider-continuity.json", { identities: [...cursorCloudObserver.identities.values()].map(cursorCloudIdentityProof), checks }, secrets);
         matcherResults.push(...checks.map(check => ({ matcher: { kind: "json_path" as const, path: `cursorCloud.${check.id}`, expected: true }, passed: check.passed, detail: check.detail })));
       }

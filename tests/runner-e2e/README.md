@@ -34,6 +34,10 @@ two-step Plan, request and review a three-step revision, then approve that exact
 revision in the browser before completion. Its three expected runs use
 Paperclip planning authority with Cursor's default harness; it does not exercise
 Cursor's native Plan API or native plan-decision callbacks.
+Draft and revision share one owned Cloud session. Approval must carry the exact
+revised interaction's fresh-session receipt and start a new owned Agent/session;
+all three turns require distinct Cloud runs. The follow-up cell keeps its
+separate same-Agent/session continuity requirement.
 The complete bounded checkpoint is `pnpm test:e2e:runner -- --suite cursor-cloud`.
 Each cell permits one attempt. Missing prerequisites setup-block before provider
 work. Teardown cancels observed active runs and deletes only agents named by

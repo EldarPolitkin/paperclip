@@ -62,6 +62,50 @@ describe("Cursor Cloud Product E2E registration", () => {
 });
 
 describe("Cloud observer evidence calibration", () => {
+  function planObserver(change?: (rows: Array<Record<string, any>>, identities: Array<Record<string, any>>) => void) {
+    const rows = [0, 1, 2].map(index => ({ id: `local-${index}`, companyId: "owned-company", agentId: "owned-agent", sessionIdBefore: null,
+      contextSnapshot: index === 2 ? { forceFreshSession: true, workspaceRefreshReason: "accepted_plan_confirmation",
+        source: "issue.interaction.accept", interactionStatus: "accepted", interactionId: "revised-confirmation" } : {} }));
+    const identities = rows.map((row, index) => ({ agentId: index < 2 ? agentId : "bc-33333333-3333-4333-8333-333333333333",
+      runId: `run-22222222-2222-4222-8222-22222222222${index}`, normalizedSessionId: index < 2 ? "planning-session" : "accepted-session" }));
+    change?.(rows, identities);
+    const api = { get: vi.fn(async (path: string) => {
+      if (path.includes("companies/")) return rows;
+      const index = rows.findIndex(row => path.includes(`/heartbeat-runs/${row.id}`));
+      if (index < 0) throw new Error("Unknown owned fixture run");
+      if (!path.includes("/events?")) return rows[index];
+      const value = notice(rows[index]!.id);
+      const identity = JSON.parse(value.payload.prpEvent.payload.summary);
+      value.payload.prpEvent.payload.summary = JSON.stringify({ ...identity, ...identities[index] });
+      return [{ ...value, seq: 1 }];
+    }) } as unknown as RunnerApi;
+    return new CursorCloudOwnedObserver(api, "owned-company", "owned-agent", "test-key");
+  }
+  it("allows only the revision-bound accepted Plan to rotate its owned Cloud session", async () => {
+    const observer = planObserver();
+    expect((await observer.assertContinuity(3))[0]?.passed).toBe(false);
+    expect((await observer.assertPlanTransitions(["local-0", "local-1", "local-2"], "revised-confirmation"))[0]?.passed).toBe(true);
+  });
+  it.each(["early rotation", "same accepted agent", "same accepted session", "duplicate native run", "wrong interaction", "missing reset", "wrong source", "not accepted", "prior session"])("rejects %s during Plan transitions", async reason => {
+    const observer = planObserver((rows, identities) => {
+      if (reason === "early rotation") identities[1]!.normalizedSessionId = "unexplained-session";
+      if (reason === "same accepted agent") identities[2]!.agentId = identities[1]!.agentId;
+      if (reason === "same accepted session") identities[2]!.normalizedSessionId = identities[1]!.normalizedSessionId;
+      if (reason === "duplicate native run") identities[2]!.runId = identities[1]!.runId;
+      if (reason === "wrong interaction") rows[2]!.contextSnapshot.interactionId = "old-confirmation";
+      if (reason === "missing reset") rows[2]!.contextSnapshot.forceFreshSession = false;
+      if (reason === "wrong source") rows[2]!.contextSnapshot.source = "issue.comment";
+      if (reason === "not accepted") rows[2]!.contextSnapshot.interactionStatus = "pending";
+      if (reason === "prior session") rows[2]!.sessionIdBefore = "planning-session";
+    });
+    expect((await observer.assertPlanTransitions(["local-0", "local-1", "local-2"], "revised-confirmation"))[0]?.passed).toBe(false);
+  });
+  it("rejects missing, duplicate or reordered Plan turn ownership", async () => {
+    for (const owners of [["local-0", "local-1"], ["local-0", "local-0", "local-2"], ["local-2", "local-1", "local-0"]]) {
+      expect((await planObserver().assertPlanTransitions(owners, "revised-confirmation"))[0]?.passed).toBe(false);
+    }
+    expect((await planObserver().assertPlanTransitions(["local-0", "local-1", "local-2"], null))[0]?.passed).toBe(false);
+  });
   it("requires persisted runner-owned identity and exports digests without native IDs", () => {
     const identity = readCursorCloudRemoteIdentity([notice()], "local-run")!;
     expect(identity).toMatchObject({ agentId, runId, ownerRunId: "local-run" });

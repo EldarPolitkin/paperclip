@@ -58,6 +58,22 @@ export class CursorCloudOwnedObserver {
     const sameSession = complete && new Set(ids.map(identity => identity!.normalizedSessionId)).size === 1;
     return [{ id: "cloud-owned-provider-continuity", passed: Boolean(sameAgent && distinctRuns && sameSession), detail: "Every local turn has its own durable Cloud run on the same owned Cloud agent and normalized session" }];
   }
+  async assertPlanTransitions(ownerRunIds: readonly string[], acceptedInteractionId: string | null): Promise<CleanupCheck[]> {
+    const rows = await this.refresh(), ids = ownerRunIds.map(id => this.identities.get(id));
+    const complete = rows.length === 3 && ownerRunIds.length === 3 && new Set(ownerRunIds).size === 3
+      && rows.every(row => ownerRunIds.includes(row.id)) && ids.every(identity => identity?.runId);
+    const distinctRuns = complete && new Set(ids.map(identity => identity!.runId)).size === 3;
+    const draftContinued = complete && ids[0]!.agentId === ids[1]!.agentId
+      && ids[0]!.normalizedSessionId === ids[1]!.normalizedSessionId;
+    const accepted = rows.find(row => row.id === ownerRunIds[2]), context = record(accepted?.contextSnapshot);
+    const freshAccepted = complete && ids[2]!.agentId !== ids[1]!.agentId
+      && ids[2]!.normalizedSessionId !== ids[1]!.normalizedSessionId && !accepted?.sessionIdBefore
+      && context.forceFreshSession === true && context.workspaceRefreshReason === "accepted_plan_confirmation"
+      && context.source === "issue.interaction.accept" && context.interactionStatus === "accepted"
+      && Boolean(acceptedInteractionId) && context.interactionId === acceptedInteractionId;
+    return [{ id: "cloud-owned-plan-session-transitions", passed: Boolean(distinctRuns && draftContinued && freshAccepted),
+      detail: "Draft and revised Plan share an owned Cloud session; approval of the exact revised interaction starts a fresh owned session, with three distinct Cloud runs" }];
+  }
   async cleanup(): Promise<CleanupCheck[]> {
     const errors: string[] = [];
     let reconciledReplies = 0;
