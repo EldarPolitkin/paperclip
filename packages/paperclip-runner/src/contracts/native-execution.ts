@@ -612,8 +612,8 @@ export function parseNativeExecutionInput(value: unknown): NativeExecutionInput 
   }
   let parsedProvider: NativeProviderConfigV9 | NativeProviderConfig | NativeProviderConfigV5;
   if (provider.kind === "cursor_cloud") {
-    if (!isV5 || !providerModel || providerModel.length > 240 || /[\x00-\x1f\x7f]/.test(providerModel) || executionMode !== "default" || lifecyclePolicy.mode !== "per_turn") {
-      throw new NativeExecutionInputError("Cursor Cloud requires a model and standard execution in a v5 or later input");
+    if (!isV5 || !providerModel || providerModel.length > 240 || /[\x00-\x1f\x7f]/.test(providerModel) || lifecyclePolicy.mode !== "per_turn") {
+      throw new NativeExecutionInputError("Cursor Cloud requires a model and per-turn lifecycle in a v5 or later input");
     }
     parsedProvider = { kind: "cursor_cloud", model: providerModel, cursorCloud: parseNativeCursorCloudConfig(provider.cursorCloud) };
   } else if (provider.kind === "claude_managed") {

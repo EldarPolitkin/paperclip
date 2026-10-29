@@ -2614,7 +2614,11 @@ export async function executeNativeSession(
             ...(recovered && modelEnvelope.schema === "paperclip.native-continuation.v1"
               ? { continuation: true as const } : {}),
             requestedCollaborationMode:
-              "executionMode" in input ? input.executionMode : "default",
+              // Paperclip planning remains in the envelope and tool authority.
+              // Cloud's qualified harness exposes only default collaboration.
+              input.provider.kind === "cursor_cloud"
+                ? "default"
+                : "executionMode" in input ? input.executionMode : "default",
           });
           await checkpoint();
         }
