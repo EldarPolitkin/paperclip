@@ -10,9 +10,54 @@ Target: a reviewable PR with experimental, local-first native Runner support.
 Merge, package publication, production rollout, and automatic conversion of
 existing agents are separate actions, not completed or implied by this record.
 
-Current delivery: [draft Runner core PR #18068](https://github.com/paperclipai/paperclip/pull/18068)
-and dependent [draft product PR #18069](https://github.com/paperclipai/paperclip/pull/18069).
-Neither PR is merged. This is the **2026-10-29 pre-qualification snapshot**,
+Current delivery: [Runner core PR #18068](https://github.com/paperclipai/paperclip/pull/18068)
+and dependent [product PR #18069](https://github.com/paperclipai/paperclip/pull/18069).
+Neither PR is merged. Product PR #18069's Verification section owns the latest
+candidate, check status and final acceptance decision.
+
+## Review correction checkpoint — 2026-10-29 20:25 UTC
+
+All six original acceptance gates have passed on their recorded candidates;
+these results do not establish a pass for subsequent runtime changes.
+
+| Gate | Retained live evidence |
+| --- | --- |
+| C1 Ordinary setup | Fresh Advanced → Paperclip Runner setup, saved reload and real catalog Test on `27172d6ee899`; saved trial retested on `3f4d92f3751e` |
+| C2 Task and C6 artifact | `cursor-cloud-local-20261028-artifact-sonnet-2`, source `b18b743cd45d`, eight strict matchers and exact registered/downloaded bytes; owned remote cleanup confirmed |
+| C3 Continuation and C5 replay | `cursor-cloud-local-20261029-followup-sonnet-11`, source `7591c52a8c32`, two runs on one owned Agent, one answered question, one injected stream cut and matching-cursor reconnect, unique ordered events, settled receipts and owned cleanup |
+| C4 Active Stop | `cursor-cloud-local-20261029-stop-sonnet-3`, source `27172d6ee899`, independently observed foreground command, ordinary UI Stop, terminal cancellation, 15-second quiet window, zero accounting debt and owned cleanup |
+
+The original failed Stop attempts remain failed: Stop-1 lacked the required
+standard final API/screenshot package, and Stop-2 did not complete its observation
+window after a status-read timeout. Stop-3 does not establish Stop-2's cause.
+
+Final review corrections cover semantic planning, bounded status-read recovery,
+atomic artifact staging and checkpoint acquisition. The planning repair retains
+the pinned Paperclip context and tool restrictions while using the Cloud default
+harness. Its two separate rejection gates have RED/GREEN proof; 2,390 affected
+tests and Core typecheck pass, with an additional real-Rust/private-facade Plan
+control. The Cloud driver, checkpoint and artifact suites pass 45, 38 and 15
+controls respectively. Completed Product E2E support checks pass 4,905 tests
+(two skipped) plus 137 source-contract tests. These are controlled results.
+
+The explicit Cloud suite now also registers the ordinary semantic
+`plan-revise-accept` cell. Its oracle requires draft/revision continuity and a
+fresh owned session tied to approval of the exact revised confirmation. The
+existing same-Agent follow-up oracle remains unchanged. The new Plan cell and a
+fresh artifact cell are **unattempted at this checkpoint**, pending final source,
+artifact and local-trial readiness. Historical artifact staging byte identity is
+invalidated by the staging repair. Preserve the earlier grades and record the
+new runtime identities and evidence impact before carrying other passes forward.
+
+The local trial is intentionally stopped during dependency/source refresh; its
+database was backed up before the additive upstream migration. No new provider
+work has started in this review-correction phase. Existing experimental-model
+acknowledgment and unpriced-cost limits still apply. No merge, publication or
+deployment is implied.
+
+## Historical pre-qualification snapshot — 2026-10-29
+
+The following is the retained **pre-qualification snapshot**,
 with production source `77b423471668d1ad55cbd4b66841d8a2b3acadf9` and Core
 `53112a12cbd8d4850ff6d88b9d739f93b49f28f9`. The latest candidate and live
 verdict belong in Product PR #18069's Verification section; keep the dated
