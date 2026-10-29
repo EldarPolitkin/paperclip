@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { semanticCanonicalJson } from "../semantic-tool-receipt.js";
 import { archiveCursorCloudSessionCheckpoint, CursorCloudCheckpointStore, cursorCloudDigest, type CursorCloudCheckpoint } from "./checkpoint.js";
@@ -184,11 +184,19 @@ describe("Cursor Cloud checkpoint ownership", () => {
     await contender.acquire();
     const originalBytes = await readFile(lockPath, "utf8");
     const replacementBytes = mode === "rewrite" ? JSON.stringify({ pid: process.pid, token: "replacement-owner" }) : originalBytes;
-    if (mode !== "rewrite") await rm(lockPath);
-    if (mode === "symlink") {
-      const target = join(f.root, "replacement-owner");
-      await writeFile(target, replacementBytes, { mode: 0o600 }); await symlink(target, lockPath);
-    } else await writeFile(lockPath, replacementBytes, { mode: 0o600 });
+    if (mode === "replace") {
+      const replacementPath = `${lockPath}.replacement`;
+      await writeFile(replacementPath, replacementBytes, { flag: "wx", mode: 0o600 });
+      const original = await lstat(lockPath), replacement = await lstat(replacementPath);
+      expect([replacement.dev, replacement.ino]).not.toEqual([original.dev, original.ino]);
+      await rename(replacementPath, lockPath);
+    } else {
+      if (mode !== "rewrite") await rm(lockPath);
+      if (mode === "symlink") {
+        const target = join(f.root, "replacement-owner");
+        await writeFile(target, replacementBytes, { mode: 0o600 }); await symlink(target, lockPath);
+      } else await writeFile(lockPath, replacementBytes, { mode: 0o600 });
+    }
     await expect(contender.release()).rejects.toThrow();
     expect(await readFile(lockPath, "utf8")).toBe(replacementBytes);
     expect(await contender.read()).toEqual(f.checkpoint);

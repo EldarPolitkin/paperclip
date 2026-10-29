@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { request } from "node:http";
 import { CursorCloudCheckpointStore } from "./checkpoint.js";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../runner-tool-bridge.js";
 import { CursorCloudDriver, type CursorCloudSessionHandle } from "./cursor-cloud-driver.js";
 import { startCursorCloudAppServerProxy } from "../../cli/cursor-cloud-app-server-proxy.js";
 
@@ -26,10 +27,10 @@ async function peer() {
   async function rpc(id: number, method: string, params: unknown = {}) { input.write(`${JSON.stringify({ id, method, params })}\n`); await vi.waitFor(() => expect(frames.some(frame => frame.id === id)).toBe(true), { timeout: 5_000 }); return frames.find(frame => frame.id === id); }
   return { root, input, output, frames, proxy, rpc, socketPath: join(root, "mcp.sock") };
 }
-function mcp(socketPath: string, body: Record<string, unknown>, sessionId?: string): Promise<{ headers: Record<string, unknown>; value: any }> {
+function mcp(socketPath: string, body: Record<string, unknown>, headers: Record<string, string>, sessionId?: string): Promise<{ headers: Record<string, unknown>; value: any }> {
   return new Promise((accept, reject) => {
-    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { Authorization: "Bearer private-relay-token", "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
-      let text = ""; response.on("data", chunk => { text += chunk; }); response.on("end", () => accept({ headers: response.headers, value: JSON.parse(text) }));
+    const req = request({ socketPath, path: "/mcp", method: "POST", headers: { ...headers, "content-type": "application/json", ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}) } }, response => {
+      let text = ""; response.on("data", chunk => { text += chunk; }); response.on("end", () => { try { accept({ headers: response.headers, value: JSON.parse(text) }); } catch (error) { reject(error); } });
     });
     req.on("error", reject); req.end(JSON.stringify({ jsonrpc: "2.0", ...body }));
   });
@@ -135,12 +136,13 @@ describe("Cursor Cloud bounded stdio proxy", () => {
   it("round-trips a semantic completion over stdio and certifies shutdown only after native terminal lookup", async () => {
     const remoteRunId = "run-22222222-2222-4222-8222-222222222222";
     let remoteAgentId = ""; let status = "RUNNING"; let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let mcpHeaders!: Record<string, string>;
     const now = "2026-10-28T00:00:00Z";
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
     const nativeFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path === "/v1/agents" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)); remoteAgentId = body.agentId;
+        const body = JSON.parse(String(init.body)); remoteAgentId = body.agentId; mcpHeaders = body.mcpServers[0].headers;
         return json({ agent: { id: remoteAgentId, status: "ACTIVE", env: { type: "cloud" }, url: `https://cursor.com/agents/${remoteAgentId}`, createdAt: now, updatedAt: now, latestRunId: remoteRunId }, run: { id: remoteRunId, agentId: remoteAgentId, status, createdAt: now, updatedAt: now } });
       }
       if (path.endsWith("/stream")) return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode(`id: 1\nevent: assistant\ndata: {"text":"Working"}\n\n`)); } }), { headers: { "content-type": "text/event-stream" } });
@@ -158,9 +160,11 @@ describe("Cursor Cloud bounded stdio proxy", () => {
       await f.rpc(1, "initialize"); await f.rpc(2, "thread/start", { model: "explicit-model", cwd: f.root, baseInstructions: "Use semantic completion." });
       const started = await f.rpc(3, "turn/start", { input: [{ type: "text", text: "Do the task" }] });
       await vi.waitFor(() => expect(stream).toBeDefined(), { timeout: 5_000 });
-      const initialized = await mcp(f.socketPath, { id: 0, method: "initialize" });
+      expect(mcpHeaders).toMatchObject({ Authorization: "Bearer private-relay-token", [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{43}$/) });
+      await expect(mcp(f.socketPath, { id: -1, method: "initialize" }, { Authorization: "Bearer private-relay-token" })).rejects.toBeInstanceOf(SyntaxError);
+      const initialized = await mcp(f.socketPath, { id: 0, method: "initialize" }, mcpHeaders);
       const input = { reportedWorkDisposition: "done", summary: "Completed.", evidence: [], verification: [], completionClaim: { contractRevision: "1", objectiveSatisfied: true, criteria: [], remainingWork: [] } };
-      const response = mcp(f.socketPath, { id: 1, method: "tools/call", params: { name: "paperclip_finish", arguments: input } }, initialized.headers["mcp-session-id"] as string);
+      const response = mcp(f.socketPath, { id: 1, method: "tools/call", params: { name: "paperclip_finish", arguments: input } }, mcpHeaders, initialized.headers["mcp-session-id"] as string);
       await vi.waitFor(() => expect(f.frames.some(frame => frame.method === "item/tool/call")).toBe(true), { timeout: 5_000 });
       const call = f.frames.find(frame => frame.method === "item/tool/call");
       expect(call.params).toMatchObject({ threadId: "session", turnId: started.result.turn.id, tool: "paperclip_finish", arguments: input });
