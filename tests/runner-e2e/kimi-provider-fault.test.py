@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock, call
 
 spec = importlib.util.spec_from_file_location('kimi_fault', Path(__file__).with_name('kimi-provider-fault.py'))
 fault = importlib.util.module_from_spec(spec)
@@ -50,9 +51,13 @@ class IdentityTests(unittest.TestCase):
                      22: [HOST_NODE, '--eval', LOADER, DIST, fault.BOOTSTRAP, '0', '0', 'commonjs', '[]', '0'], 23: ['kimi-code']}
         self.stats = {'/proc/21/exe': (90, stat.S_IFREG), '/proc/23/exe': (100, stat.S_IFREG), '/proc/23/fd/7': (100, stat.S_IFREG),
                       '/proc/24/exe': (100, stat.S_IFREG), '/proc/24/fd/7': (100, stat.S_IFREG),
-                      '/proc/22/fd/10': (110, stat.S_IFREG), '/proc/22/fd/4': (2, stat.S_IFDIR), '/proc/22/fd/3': (3, stat.S_IFIFO)}
+                      '/proc/22/exe': (110, stat.S_IFREG), '/proc/22/fd/10': (110, stat.S_IFREG), '/proc/22/fd/4': (2, stat.S_IFDIR), '/proc/22/fd/3': (3, stat.S_IFIFO)}
+        def checked_fixture_file(name, *args):
+            if name.startswith('/memfd:'):
+                raise FileNotFoundError(2, 'deleted executable fixture')
+            return self.files[name]
         patches = [patch.object(fault, 'proc', side_effect=lambda pid, boot: self.table[pid]), patch.object(fault, 'argv', side_effect=lambda pid: self.args[pid]),
-                   patch.object(fault, 'checked_runner', side_effect=lambda name: self.files[name]), patch.object(fault, 'checked_file', side_effect=lambda name, *args: self.files[name]),
+                   patch.object(fault, 'checked_runner', side_effect=lambda name: self.files[name]), patch.object(fault, 'checked_file', side_effect=checked_fixture_file),
                    patch.object(Path, 'read_text', return_value=BOOT), patch.object(os, 'listdir', side_effect=lambda name: [str(pid) for pid in self.table]),
                    patch.object(os, 'getpgid', return_value=21), patch.object(os, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR | 0o500, st_dev=1, st_ino=2)),
                    patch.object(os.path, 'realpath', side_effect=lambda name: HOST_NODE if name == '/proc/22/exe' else name),
@@ -60,6 +65,32 @@ class IdentityTests(unittest.TestCase):
         for mocked in patches:
             mocked.start()
             self.addCleanup(mocked.stop)
+
+    @contextmanager
+    def parent_descriptor(self, anonymous=False, content=None):
+        content = fault.NODE.encode() if content is None else content
+        def metadata(inode=110):
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o500, st_dev=1, st_ino=inode, st_size=len(content), st_mtime_ns=3, st_ctime_ns=4, st_nlink=0 if anonymous else 1)
+        original_stat = os.stat
+        def proc_stat(path):
+            if path in ('/proc/22/exe', '/proc/22/fd/10'):
+                return metadata(self.stats[path][0])
+            return original_stat(path)
+        kernel = SimpleNamespace(F_GET_SEALS=1034, F_SEAL_SEAL=1, F_SEAL_SHRINK=2, F_SEAL_GROW=4, F_SEAL_WRITE=8, fcntl=lambda fd, op: 15)
+        with patch.object(os, 'open', return_value=42), patch.object(os, 'close'), patch.object(os, 'fstat', side_effect=lambda fd: metadata()), patch.object(os, 'read', side_effect=[content, b'']), patch.object(os, 'stat', side_effect=proc_stat), patch.object(os, 'readlink', side_effect=lambda path: '/memfd:paperclip-verified-launch (deleted)' if path == '/proc/self/fd/42' else '/workspace'), patch.object(fault, 'fcntl', kernel, create=True):
+            yield
+
+    def test_memfd_parent_uses_the_live_descriptor_without_reopening_deleted_alias(self):
+        self.args[22][0] = '/proc/self/fd/10'
+        with patch.object(os.path, 'realpath', side_effect=lambda name: '/memfd:paperclip-verified-launch (deleted)' if name == '/proc/22/exe' else name), self.parent_descriptor(True):
+            receipt = fault.inspect(self.config)
+        self.assertEqual(receipt['target'], TARGET)
+        self.assertFalse(any('/memfd:' in str(call) for call in fault.checked_file.call_args_list))
+
+    def test_matching_memfd_inode_and_seals_do_not_replace_the_full_node_digest(self):
+        self.args[22][0] = '/proc/self/fd/10'
+        with self.parent_descriptor(True, b'x' * len(fault.NODE.encode())), self.assertRaisesRegex(RuntimeError, 'parent_node'):
+            fault.inspect(self.config)
 
     def test_exact_pinned_parent_attests_title_overwritten_child(self):
         receipt = fault.inspect(self.config)
@@ -70,9 +101,10 @@ class IdentityTests(unittest.TestCase):
 
     def test_held_host_node_descriptor_requires_the_same_inode(self):
         self.args[22][0] = '/proc/self/fd/10'
-        self.assertEqual(fault.inspect(self.config)['target'], TARGET)
+        with self.parent_descriptor():
+            self.assertEqual(fault.inspect(self.config)['target'], TARGET)
         self.stats['/proc/22/fd/10'] = (999, stat.S_IFREG)
-        with self.assertRaisesRegex(RuntimeError, 'parent_node_descriptor'):
+        with self.parent_descriptor(), self.assertRaisesRegex(RuntimeError, 'parent_node_descriptor'):
             fault.inspect(self.config)
 
     def test_title_alone_and_root_loss_never_select(self):
@@ -136,6 +168,96 @@ class IdentityTests(unittest.TestCase):
         for changed in [list(reversed(self.entries)), [*self.entries, self.entries[-1]], [{**self.entries[0], 'path': '../escape'}, self.entries[1]], [{**self.entries[0], 'extra': True}, self.entries[1]]]:
             with self.subTest(changed=changed), self.assertRaises(RuntimeError):
                 fault.parse_closure(json.dumps({'entries': changed}).encode(), self.config['closureSha256'])
+
+
+class ParentDescriptorTests(unittest.TestCase):
+    def setUp(self):
+        self.content = b'pinned node bytes'
+        self.before = SimpleNamespace(st_mode=stat.S_IFREG | 0o500, st_dev=1, st_ino=110, st_size=len(self.content), st_mtime_ns=3, st_ctime_ns=4, st_nlink=0)
+        self.stats = {'/proc/22/fd/10': self.before, '/proc/22/exe': self.before}
+        self.opened = Mock(return_value=42)
+        self.closed = Mock()
+        self.fstat = Mock(side_effect=lambda fd: self.before)
+        self.read = Mock(side_effect=[self.content, b''])
+        self.readlink = Mock(return_value='/memfd:paperclip-verified-launch (deleted)')
+        self.kernel = SimpleNamespace(F_GET_SEALS=1034, F_SEAL_SEAL=1, F_SEAL_SHRINK=2, F_SEAL_GROW=4, F_SEAL_WRITE=8, fcntl=Mock(return_value=15))
+        patches = [patch.object(os, 'open', self.opened), patch.object(os, 'close', self.closed), patch.object(os, 'fstat', self.fstat), patch.object(os, 'read', self.read), patch.object(os, 'stat', side_effect=lambda path: self.stats[path]), patch.object(os, 'readlink', self.readlink), patch.object(fault, 'fcntl', self.kernel, create=True)]
+        for mocked in patches:
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
+    def test_sealed_memfd_requires_complete_bytes_and_same_kernel_executable(self):
+        self.assertEqual(fault.checked_parent_descriptor(22), (self.content, (1, 110)))
+        self.opened.assert_called_once_with('/proc/22/fd/10', os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        self.kernel.fcntl.assert_has_calls([call(42, 1034), call(42, 1034)])
+        self.closed.assert_called_once_with(42)
+
+    def test_linked_descriptor_keeps_regular_single_link_checks_without_memfd_claim(self):
+        self.before.st_nlink = 1
+        self.assertEqual(fault.checked_parent_descriptor(22), (self.content, (1, 110)))
+        self.kernel.fcntl.assert_not_called()
+        self.readlink.assert_not_called()
+
+    def test_every_missing_kernel_seal_fails_before_read(self):
+        for bit in (1, 2, 4, 8):
+            with self.subTest(bit=bit):
+                self.kernel.fcntl.return_value = 15 ^ bit
+                with self.assertRaisesRegex(RuntimeError, 'parent_memfd_seals'):
+                    fault.checked_parent_descriptor(22)
+        self.read.assert_not_called()
+        self.assertEqual(self.closed.call_count, 4)
+
+    def test_an_unlinked_regular_file_cannot_impersonate_the_authenticated_memfd(self):
+        self.readlink.return_value = '/tmp/node (deleted)'
+        with self.assertRaisesRegex(RuntimeError, 'parent_memfd_required'):
+            fault.checked_parent_descriptor(22)
+        self.read.assert_not_called()
+        self.kernel.fcntl.assert_not_called()
+
+    def test_memfd_write_mode_and_missing_seal_api_fail_closed(self):
+        self.before.st_mode = stat.S_IFREG | 0o700
+        with self.assertRaisesRegex(RuntimeError, 'parent_memfd_required'):
+            fault.checked_parent_descriptor(22)
+        self.before.st_mode = stat.S_IFREG | 0o500
+        del self.kernel.F_GET_SEALS
+        with self.assertRaisesRegex(RuntimeError, 'parent_memfd_required'):
+            fault.checked_parent_descriptor(22)
+        self.read.assert_not_called()
+
+    def test_different_held_descriptor_or_executable_never_attests(self):
+        for path in ('/proc/22/fd/10', '/proc/22/exe'):
+            with self.subTest(path=path):
+                self.stats[path] = SimpleNamespace(**{**vars(self.before), 'st_ino': 999})
+                with self.assertRaisesRegex(RuntimeError, 'parent_node_descriptor'):
+                    fault.checked_parent_descriptor(22)
+                self.stats[path] = self.before
+        self.read.assert_not_called()
+
+    def test_descriptor_metadata_change_during_read_is_rejected(self):
+        changed = SimpleNamespace(**{**vars(self.before), 'st_ctime_ns': 99})
+        self.fstat.side_effect = [self.before, changed]
+        with self.assertRaisesRegex(RuntimeError, 'parent_descriptor_changed'):
+            fault.checked_parent_descriptor(22)
+        self.closed.assert_called_once_with(42)
+
+    def test_short_read_or_changed_seals_cannot_attest(self):
+        self.read.side_effect = [b'short', b'']
+        with self.assertRaisesRegex(RuntimeError, 'parent_descriptor_changed'):
+            fault.checked_parent_descriptor(22)
+        self.read.side_effect = [self.content, b'']
+        self.kernel.fcntl.side_effect = [15, 7]
+        with self.assertRaisesRegex(RuntimeError, 'parent_memfd_seals'):
+            fault.checked_parent_descriptor(22)
+
+    def test_nonregular_oversized_or_multilink_handles_fail_before_read(self):
+        for field, value in [('st_mode', stat.S_IFIFO), ('st_nlink', 2), ('st_size', 256 * 1024 * 1024 + 1)]:
+            with self.subTest(field=field):
+                before = getattr(self.before, field)
+                setattr(self.before, field, value)
+                with self.assertRaisesRegex(RuntimeError, 'parent_descriptor_shape'):
+                    fault.checked_parent_descriptor(22)
+                setattr(self.before, field, before)
+        self.read.assert_not_called()
 
 
 class PidfdTests(unittest.TestCase):

@@ -664,7 +664,7 @@ export const runnerTasks: readonly RunnerTaskFixture[] = [
     buildRevisionRequest: (nonce) =>
       [
         "Revise this same plan; do not implement it yet.",
-        `Remove PAPERCLIP_E2E_PLAN_DRAFT_${nonce} and include PAPERCLIP_E2E_PLAN_REVISED_${nonce}.`,
+        `Replace the first line with exactly PAPERCLIP_E2E_PLAN_REVISED_${nonce} and remove PAPERCLIP_E2E_PLAN_DRAFT_${nonce}. Use literal underscore characters with no backslashes or other text on that first line.`,
         "Change the plan from two steps to exactly three numbered steps, with verification as step 3.",
         "Publish the revised canonical Plan revision and request confirmation for that new revision.",
         "In a native runner, call write_document for key `plan`, then call request_human_input exactly once with interactionKind `confirmation`, targetRevisionId set to the returned latest Plan revision, and continuationPolicy `wake_assignee`; do not call paperclip_finish while waiting. After write_document succeeds, request_human_input must be your immediate next action using that call's returned latestRevisionId; do not emit assistant text, end the response or heartbeat, or stop after write_document alone.",
@@ -674,7 +674,7 @@ export const runnerTasks: readonly RunnerTaskFixture[] = [
       [
         "This is a planning-mode lifecycle acceptance task.",
         "First, create a small canonical Plan with exactly two numbered steps and request approval; do not implement it.",
-        `The initial Plan body must contain PAPERCLIP_E2E_PLAN_DRAFT_${nonce}.`,
+        `The initial Plan body must have exactly PAPERCLIP_E2E_PLAN_DRAFT_${nonce} as its first line, followed by exactly two numbered steps. Use literal underscore characters with no backslashes or other text on that first line.`,
         "If the plan is sent back, revise that same Plan document according to the revision note, publish a new revision-bound confirmation, and still do not implement.",
         `Before the revised Plan is accepted, do not spell, quote, repeat, announce, or include PAPERCLIP_E2E_PLAN_DONE_${nonce} in any visible response, comment, or tool payload; refer to it only as “the terminal marker.”`,
         "Only after the revised plan is accepted, implement it by posting one final visible task-thread response containing exactly " +
@@ -1459,7 +1459,8 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       ...kimiLifecycleTasks,
     ].map(task => ({ ...task, automaticRetryPolicy: "single_attempt" as const })),
     expectedMatrixSize: 20,
-    definitionMetadata: { version: 4, binary: "2.3.3", model: "kimi-for-coding",
+    definitionMetadata: { version: 5, binary: "2.3.3", model: "kimi-for-coding",
+      planPromptContract: "literal-first-line-markers-v2",
       modelDiscovery: "exact-model-authenticated-observed", qualification: "pending",
       scheduling: "explicit-only", maximumAttemptsPerCell: 1, repetitionsRequired: 1,
       instructionAdmission: "native-effective-prompt-digest-on-create-load",

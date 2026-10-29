@@ -19,6 +19,10 @@ const bootId = "12345678-1234-1234-1234-123456789abc";
 const authority = { companyId: "company", environmentId: "environment", runId: "run", leaseId: "lease", sandboxId: "sandbox", image: `registry/image@sha256:${"a".repeat(64)}` };
 const binding = { ...authority, remoteCwd: "/workspace" };
 const root = { pid: 21, ppid: 1, startTicks: "100", bootId };
+function kimiWorker(overrides: Record<string, unknown> = {}) {
+  return { schema: "paperclip.kimi11.remote-fault-diagnostic.v1", qualification: false, status: "FAIL", stage: "inspect_before", failingGuard: "parent_bootstrap", errno: null,
+    signalAttempted: false, signalDispatched: false, receipt: null, externalModelCalls: 0, ...overrides };
+}
 function snapshot(): RemoteNativeSnapshot {
   return { binding, observedAtMs: 1000, observedMonotonicNs: "10000", receivedAtMs: 1000, complete: true, workspace: { "existing.txt": hash("original") },
     targets: { "result.txt": { absent: true, sha256: null, parent: { dev: "1", ino: "2" }, mutationCount: 0, complete: true } },
@@ -69,6 +73,10 @@ describe("remote process exit during proc reads", () => {
 });
 
 describe("remote native lease admission", () => {
+  it("keeps the actual observer installation command below the native Linux argv string bound", async () => {
+    const h = harness(), fixture = await bindRemoteNativeFixture(h.options), install = h.calls.find(call => call.request.op === "install");
+    expect(install).toBeDefined(); expect(Buffer.byteLength(install!.command)).toBeLessThan(131072); await fixture.close();
+  });
   it.each(["companyId", "environmentId", "heartbeatRunId", "providerLeaseId", "provider", "status"])("rejects wrong %s before executing any remote command", async key => {
     const h = harness(); h.setLease({ ...h.lease(), [key]: "foreign" });
     await expect(bindRemoteNativeFixture(h.options)).rejects.toThrow("lease_scope"); expect(h.executeCommand).not.toHaveBeenCalled();
@@ -580,17 +588,49 @@ describe("actual generated observer state machine", () => {
   it("enforces Kimi observer authority before the exact one-shot native-child fault", async () => {
     const o = await observerHarness(), contract = kimiFaultRuntimeContract("linux-x64"); o.request("snapshot");
     const request = { runtimeEnvironmentLeaseId: "workspace-id", contract, bootstrapTemplate: "reviewed bootstrap", guardTemplate: "reviewed guard" };
-    expect(o.request("kimi-provider-death", request)[0].ok).toBe(false); expect(o.faultSpawn).not.toHaveBeenCalled();
+    o.faultSpawn.mockReturnValue({ status: 0, stdout: JSON.stringify(kimiWorker({ status: "PASS", stage: "complete", failingGuard: null, signalAttempted: true, signalDispatched: true, receipt: piFaultReceipt() })) });
+    expect(o.request("kimi-provider-death", request)[0]).toEqual({ ok: false, error: "observer_evidence_incomplete", diagnostic: { stage: "observer_admission", code: "observer_authority", signalDispatched: false } }); expect(o.faultSpawn).not.toHaveBeenCalled();
     o.request("publish", { path: "action.txt", text: "Use the native read tool" });
     expect(o.request("kimi-provider-death", { ...request, runtimeEnvironmentLeaseId: "foreign" })[0].ok).toBe(false);
     expect(o.faultSpawn).not.toHaveBeenCalled();
     expect(o.request("kimi-provider-death", request)[0].ok).toBe(true);
     const [program, args, options] = o.faultSpawn.mock.calls[0] as unknown as [string, string[], Record<string, unknown>];
     expect(program).toBe("/usr/bin/python3"); expect(args.slice(0, 2)).toEqual(["-I", "-c"]);
-    expect(args[2]).toContain("signal.pidfd_send_signal"); expect(args[2]).toContain("kimi_provider_identity_or_signal_failed");
-    expect(JSON.parse(Buffer.from(args[3]!, "base64").toString())).toEqual({ root, binding, runtimeEnvironmentLeaseId: "workspace-id", runnerdSha256: hash("runnerd"), closureSha256: contract.closureSha256, nodeSha256: contract.nodeSha256, guardLoaderSha256: contract.guardLoaderSha256, bootstrapTemplate: request.bootstrapTemplate, guardTemplate: request.guardTemplate });
+    expect(args[2]).toContain("signal.pidfd_send_signal"); expect(Buffer.from(args[3]!, "base64").toString()).toContain("kimi_provider_identity_or_signal_failed");
+    expect(JSON.parse(Buffer.from(args[4]!, "base64").toString())).toEqual({ root, binding, runtimeEnvironmentLeaseId: "workspace-id", runnerdSha256: hash("runnerd"), closureSha256: contract.closureSha256, nodeSha256: contract.nodeSha256, guardLoaderSha256: contract.guardLoaderSha256, bootstrapTemplate: request.bootstrapTemplate, guardTemplate: request.guardTemplate });
     expect(options.env).toEqual({ PATH: "/usr/bin:/bin" }); expect(o.context.process.kill).not.toHaveBeenCalled();
     expect(o.request("kimi-provider-death", request)[0].ok).toBe(false); expect(o.faultSpawn).toHaveBeenCalledOnce();
+  });
+  it("records no signal before a rejected observer nonce without executing the worker", async () => {
+    const o = await observerHarness(); o.request("snapshot"); o.request("publish", { path: "action.txt", text: "action" });
+    expect(o.request("kimi-provider-death", { nonce: "foreign" })[0]).toEqual({ ok: false, error: "observer_evidence_incomplete", diagnostic: { stage: "observer_admission", code: "observer_authority", signalDispatched: false } }); expect(o.faultSpawn).not.toHaveBeenCalled(); expect(o.context.process.kill).not.toHaveBeenCalled();
+  });
+  it.each([false, null, true])("retains a closed failed worker acknowledgement %s without retry", async signalDispatched => {
+    const o = await observerHarness(); o.request("snapshot"); o.request("publish", { path: "action.txt", text: "action" });
+    o.faultSpawn.mockReturnValue({ status: 1, stdout: JSON.stringify(kimiWorker({ stage: signalDispatched === false ? "inspect_before" : signalDispatched === null ? "signal" : "receipt", failingGuard: signalDispatched === false ? "parent_bootstrap" : null, signalAttempted: signalDispatched !== false, signalDispatched })) });
+    const reply = o.request("kimi-provider-death", { runtimeEnvironmentLeaseId: "workspace-id", contract: kimiFaultRuntimeContract("linux-x64"), bootstrapTemplate: "reviewed", guardTemplate: "reviewed" })[0];
+    expect(reply).toEqual({ ok: false, error: "observer_evidence_incomplete", diagnostic: { stage: signalDispatched === false ? "inspect_before" : signalDispatched === null ? "signal" : "receipt", code: signalDispatched === false ? "parent_bootstrap" : "worker_failure", signalDispatched } });
+    expect(JSON.stringify(reply)).not.toContain("private");
+    expect(o.request("kimi-provider-death", { runtimeEnvironmentLeaseId: "workspace-id" })[0].ok).toBe(false); expect(o.faultSpawn).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { status: null, signal: "SIGKILL", stdout: "" },
+    { status: 1, stdout: "private exception text" },
+    { status: 1, stdout: "null" },
+    { status: 1, stdout: JSON.stringify(kimiWorker({ status: "PASS", stage: "complete", failingGuard: null, signalAttempted: true, signalDispatched: true })) },
+    { status: 0, stdout: JSON.stringify(kimiWorker()) },
+    { status: 1, stdout: JSON.stringify(kimiWorker({ signalAttempted: true })) },
+    { status: null, signal: "SIGKILL", stdout: JSON.stringify(kimiWorker({ status: "PASS", stage: "complete", failingGuard: null, signalAttempted: true, signalDispatched: true })) },
+    { status: 1, stdout: JSON.stringify(kimiWorker({ stage: "private_stage", failingGuard: "private_path" })) },
+    { status: 0, stdout: JSON.stringify(kimiWorker({ status: "PASS", stage: "complete", failingGuard: null })) },
+    { status: 1, stdout: JSON.stringify(kimiWorker({ stage: "terminate", signalAttempted: true, signalDispatched: true })) },
+    { status: 1, stdout: JSON.stringify(kimiWorker({ private: "secret/path" })) },
+    { status: 1, error: new Error("private spawn error"), stdout: JSON.stringify(kimiWorker()) },
+    { status: 1, signal: "SIGKILL", stdout: JSON.stringify(kimiWorker()) },
+  ])("keeps an unproven worker outcome unknown", async outcome => {
+    const o = await observerHarness(); o.request("snapshot"); o.request("publish", { path: "action.txt", text: "action" }); o.faultSpawn.mockReturnValue(outcome as never);
+    const reply = o.request("kimi-provider-death", { runtimeEnvironmentLeaseId: "workspace-id", contract: kimiFaultRuntimeContract("linux-x64"), bootstrapTemplate: "reviewed", guardTemplate: "reviewed" })[0];
+    expect(reply.ok).toBe(false); expect(reply.diagnostic.signalDispatched).toBeNull(); expect(JSON.stringify(reply)).not.toContain("private"); expect(o.context.process.kill).not.toHaveBeenCalled();
   });
   it("executes the actual observer fault phase once with a closed environment and exact identity", async () => {
     for (const published of [false, true]) {
@@ -950,6 +990,33 @@ describe("exact Pi-child fault capability", () => {
 });
 
 describe("exact Kimi-child fault capability", () => {
+  it.each(["parent_descriptor_changed", "parent_descriptor_shape", "parent_memfd_required", "parent_memfd_seals"])("retains the reviewed memfd guard %s", async code => {
+    const h = harness(), fixture = await bindRemoteNativeFixture(h.options); await fixture.publishAction("action.txt", "action");
+    h.override(request => request.op === "kimi-provider-death" ? { exitCode: 0, result: JSON.stringify({ ok: false, diagnostic: { stage: "inspect_before", code, signalDispatched: false } }) } : undefined);
+    const error = await fixture.terminateKimiProvider!("workspace-id").catch(error => error);
+    expect(remoteNativeFixtureDiagnostics(error)[0]?.fault).toEqual({ stage: "inspect_before", code, signalDispatched: false }); await fixture.close();
+  });
+  it.each([false, null, true])("propagates a validated worker signal acknowledgement %s through the public diagnostic projector", async signalDispatched => {
+    const h = harness(), fixture = await bindRemoteNativeFixture(h.options); await fixture.publishAction("action.txt", "action");
+    h.override(request => request.op === "kimi-provider-death" ? { exitCode: 0, result: JSON.stringify({ ok: false, error: "observer_evidence_incomplete", diagnostic: { stage: signalDispatched === false ? "inspect_before" : signalDispatched === null ? "signal" : "receipt", code: signalDispatched === false ? "native_guard_bytes" : "worker_failure", signalDispatched } }) } : undefined);
+    const error = await fixture.terminateKimiProvider!("workspace-id").catch(error => error);
+    expect(remoteNativeFixtureDiagnostics(error)).toEqual([{ phase: "kimi-provider-death", code: "kimi_provider_identity_or_signal_failed", fault: { stage: signalDispatched === false ? "inspect_before" : signalDispatched === null ? "signal" : "receipt", code: signalDispatched === false ? "native_guard_bytes" : "worker_failure", signalDispatched } }]); await fixture.close();
+  });
+  it("keeps a transport exception signal-unknown without leaking SDK text", async () => {
+    const h = harness(), fixture = await bindRemoteNativeFixture(h.options); await fixture.publishAction("action.txt", "action");
+    h.override(request => { if (request.op === "kimi-provider-death") throw new Error("private SDK credential/path"); return undefined; });
+    const error = await fixture.terminateKimiProvider!("workspace-id").catch(error => error), diagnostics = remoteNativeFixtureDiagnostics(error);
+    expect(diagnostics).toEqual([{ phase: "kimi-provider-death", code: "transport_failure", fault: { stage: "worker_response", code: "invalid_response", signalDispatched: null } }]); expect(JSON.stringify(diagnostics)).not.toContain("private"); await fixture.close();
+  });
+  it.each([
+    { exitCode: 1, result: "private stderr" },
+    { exitCode: 0, result: "not json" },
+    { exitCode: 0, result: JSON.stringify({ ok: false, diagnostic: { stage: "private", code: "private", signalDispatched: false } }) },
+  ])("does not infer no signal from an untyped RPC failure", async response => {
+    const h = harness(), fixture = await bindRemoteNativeFixture(h.options); await fixture.publishAction("action.txt", "action"); h.override(request => request.op === "kimi-provider-death" ? response : undefined);
+    const error = await fixture.terminateKimiProvider!("workspace-id").catch(error => error), diagnostics = remoteNativeFixtureDiagnostics(error);
+    expect(diagnostics).toHaveLength(1); expect(diagnostics[0]?.fault).toEqual({ stage: "worker_response", code: "invalid_response", signalDispatched: null }); expect(JSON.stringify(diagnostics)).not.toContain("private"); await fixture.close();
+  });
   it("requires publication and consumes uncertain one-shot delivery without a worker-loss fallback", async () => {
     const h = harness(), fixture = await bindRemoteNativeFixture(h.options);
     await expect(fixture.terminateKimiProvider!("workspace-id")).rejects.toThrow();

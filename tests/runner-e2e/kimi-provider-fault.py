@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -62,6 +63,38 @@ def checked_file(path, maximum, sealed=False):
         after, named = os.fstat(fd), os.lstat(path)
         identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_mode, value.st_nlink)
         require(size == before.st_size and identity(before) == identity(after) == identity(named), 'file_changed')
+        return b''.join(chunks), (before.st_dev, before.st_ino)
+    finally:
+        os.close(fd)
+
+
+def checked_parent_descriptor(pid):
+    path = f'/proc/{pid}/fd/10'
+    executable = f'/proc/{pid}/exe'
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_mode, value.st_nlink)
+    try:
+        before = os.fstat(fd)
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink in (0, 1) and 0 < before.st_size <= 256 * 1024 * 1024, 'parent_descriptor_shape')
+        require(identity(before) == identity(os.stat(path)) == identity(os.stat(executable)), 'parent_node_descriptor')
+        seals = None
+        if before.st_nlink == 0:
+            require(all(hasattr(fcntl, name) for name in ('F_GET_SEALS', 'F_SEAL_WRITE', 'F_SEAL_GROW', 'F_SEAL_SHRINK', 'F_SEAL_SEAL')), 'parent_memfd_required')
+            require(os.readlink(f'/proc/self/fd/{fd}') == '/memfd:paperclip-verified-launch (deleted)' and before.st_mode & 0o222 == 0, 'parent_memfd_required')
+            required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+            seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+            require(type(seals) is int and seals & required == required, 'parent_memfd_seals')
+        chunks, size = [], 0
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            require(size <= 256 * 1024 * 1024, 'parent_descriptor_shape')
+        require(size == before.st_size and identity(before) == identity(os.fstat(fd)) == identity(os.stat(path)) == identity(os.stat(executable)), 'parent_descriptor_changed')
+        if seals is not None:
+            require(fcntl.fcntl(fd, fcntl.F_GET_SEALS) == seals, 'parent_memfd_seals')
         return b''.join(chunks), (before.st_dev, before.st_ino)
     finally:
         os.close(fd)
@@ -188,13 +221,13 @@ def inspect(config):
         require(checked_file(distribution + '/' + GUARD, 4 * 1024 * 1024, True)[0] == guard, 'native_guard_bytes')
         native_exe, held_node = os.stat(f'/proc/{pid}/exe'), os.stat(f'/proc/{pid}/fd/7')
         require((native_exe.st_dev, native_exe.st_ino) == identities[NODE] == (held_node.st_dev, held_node.st_ino), 'native_executable')
-        parent_exe_path = os.path.realpath(f'/proc/{parent}/exe')
-        parent_bytes, parent_inode = checked_file(parent_exe_path, 256 * 1024 * 1024)
-        require('sha256:' + digest(parent_bytes) == config['nodeSha256'], 'parent_node')
         if args[0] == '/proc/self/fd/10':
-            held = os.stat(f'/proc/{parent}/fd/10')
-            require((held.st_dev, held.st_ino) == parent_inode, 'parent_node_descriptor')
+            parent_bytes, parent_inode = checked_parent_descriptor(parent)
         else:
+            parent_exe_path = os.path.realpath(f'/proc/{parent}/exe')
+            parent_bytes, parent_inode = checked_file(parent_exe_path, 256 * 1024 * 1024)
+        require('sha256:' + digest(parent_bytes) == config['nodeSha256'], 'parent_node')
+        if args[0] != '/proc/self/fd/10':
             require(args[0] == PACK + '/node_modules/node/bin/node' and checked_file(args[0], 256 * 1024 * 1024)[1] == parent_inode, 'parent_node_path')
         directory_fd = os.stat(f'/proc/{parent}/fd/4')
         directory = os.lstat(distribution)

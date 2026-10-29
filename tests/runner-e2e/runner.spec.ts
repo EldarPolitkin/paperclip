@@ -2931,6 +2931,7 @@ for (const execution of executions) {
         {
           issue,
           run,
+          runs: selectedRuns,
           comments: terminal.comments,
           interactions: terminal.interactions,
           planLifecycleEvidence,
