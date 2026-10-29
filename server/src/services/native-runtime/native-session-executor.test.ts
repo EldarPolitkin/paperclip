@@ -154,7 +154,6 @@ type RunnerTransportOptions = {
   };
   provider?: "cursor_cloud" | "codex" | "opencode" | "acpx";
   cursorCloud?: Extract<NativeExecutionInput["provider"], { kind: "cursor_cloud" }>["cursorCloud"];
-  environment?: NodeJS.ProcessEnv;
   lifecyclePolicy?: NativeExecutionInput["session"]["lifecyclePolicy"];
   opencodePermissionMode?: "allow" | "ask" | "deny";
   acpxAgent?: "claude" | "codex";
