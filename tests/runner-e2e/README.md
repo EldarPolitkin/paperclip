@@ -3105,3 +3105,18 @@ they are not reported as charges or converted into reviewed lifecycle bounds.
 This mode therefore does not certify a full-lifecycle operating-cost ceiling.
 Omitting the policy preserves the stricter full-accounting gate. Historical
 journals and their holds are not rewritten by changing future campaign policy.
+
+### Saved native target authentication validation (source candidate)
+
+`runs-adapters.validate-hire` keeps its original Morgan query, one controller
+work admission, one human message and 600-second attempt. Its selected OpenRouter
+input uses `targetRef: fixture.environment` and `accountBindingRef: OPENROUTER_API_KEY`.
+A new, genuinely validated target app connection has its own encrypted slot;
+only that slot receives an invalid disposable value. The controller's fixed
+connection and the real provider key remain unchanged. Morgan is a real public
+setup-held native OpenCode profile on the owned local fixture, without a setup
+hello or employee work. The canonical validation uses existing run/actor/issue
+request-digest receipts and target account authentication state. Expected
+reauthorization is allowed; raw provider events and response artifacts are not
+an oracle fallback. Public setup probes and AWS/setup billing remain outside
+complete heartbeat usage coverage. This source candidate has not run.
