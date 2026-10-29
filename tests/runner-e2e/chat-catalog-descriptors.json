@@ -415,31 +415,15 @@
     "exportName": "runtimeAgentKeyCases"
   },
   {
-    "requiredCredentials": [
-      "ANTHROPIC_API_KEY",
-      "DAYTONA_API_KEY"
-    ],
-    "externalInput": {
-      "provider": "daytona",
-      "fields": [
-        "imageDigest",
-        "imageRef",
-        "region",
-        "disposableNamespace",
-        "qualifiedHarness"
-      ]
-    },
     "scenarioId": "agents.ambiguous-cloud-code",
     "sourceFiles": [
       "chat-catalog-domains/runtime-cloud-choice.ts",
-      "chat-catalog-domains/runtime-daytona-target.ts",
-      "chat-catalog-domains/runtime-private.ts",
-      "chat-catalog-domains/runtime-claude-private.ts",
-      "chat-catalog-domains/runtime-claude-private-worker.ts",
+      "chat-catalog-domains/runtime-negative-prerequisites.ts",
       "chat-catalog-domains/runtime-support.ts",
-      "chat-catalog-domains/external-private-browser.ts",
-      "chat-catalog-domains/external-private-browser-worker.ts",
-      "live-fixtures.ts",
+      "../../server/src/routes/adapters.ts",
+      "../../server/src/services/agent-runner-selection.ts",
+      "../../server/src/routes/environments.ts",
+      "../../packages/shared/src/environment-support.ts",
       "../../packages/plugins/sandbox-providers/daytona/src/plugin.ts",
       "chat-scenarios/agents.yaml"
     ],
@@ -450,7 +434,8 @@
     "attemptTimeoutMs": 900000,
     "authentication": "human-session",
     "modulePath": "./chat-catalog-domains/runtime-cloud-choice.js",
-    "exportName": "runtimeCloudChoiceCases"
+    "exportName": "runtimeCloudChoiceCases",
+    "expectedHumanMessageCount": 1
   },
   {
     "scenarioId": "agents.change-manager",
@@ -629,34 +614,21 @@
     "exportName": "runtimeAgentsCases"
   },
   {
-    "requiredCredentials": [
-      "ANTHROPIC_API_KEY"
-    ],
-    "externalInput": {
-      "provider": "claude",
-      "fields": [
-        "targetRef",
-        "harnessExecutable",
-        "model",
-        "accountBindingRef"
-      ]
-    },
     "scenarioId": "agents.hire-needs-account",
     "sourceFiles": [
       "chat-catalog-domains/runtime-claude-account.ts",
-      "chat-catalog-domains/runtime-claude-private.ts",
-      "chat-catalog-domains/runtime-claude-private-worker.ts",
-      "chat-catalog-domains/runtime-private.ts",
+      "chat-catalog-domains/runtime-negative-prerequisites.ts",
       "chat-catalog-domains/runtime-support.ts",
+      "../../server/src/routes/adapters.ts",
+      "../../server/src/services/agent-runner-selection.ts",
       "../../server/src/routes/connection-intents.ts",
       "../../server/src/services/connection-intent-delivery.ts",
       "chat-scenarios/agents.yaml"
     ],
     "oracleVersion": "paperclip.chat-catalog.runtime.v2",
     "coverageGaps": [],
-    "expectedRunCount": 3,
-    "expectedHumanMessageCount": 2,
-    "minimumRunCount": 2,
+    "expectedRunCount": 1,
+    "expectedHumanMessageCount": 1,
     "turnTimeoutMs": 120000,
     "attemptTimeoutMs": 900000,
     "authentication": "human-session",

@@ -5,13 +5,11 @@ export const runtimePrivateRequirements = {
   "execution-environments.assign-computer": { provider: "daytona", fields: ["imageDigest", "imageRef", "region", "disposableNamespace", "qualifiedHarness"], credentials: ["DAYTONA_API_KEY"] },
   "recovery.workspace-repair": { provider: "daytona", fields: ["imageDigest", "imageRef", "region", "disposableNamespace", "qualifiedHarness"], credentials: ["DAYTONA_API_KEY"] },
   "workspaces.recover-lost-sandbox": { provider: "daytona", fields: ["imageDigest", "imageRef", "region", "disposableNamespace", "qualifiedHarness"], credentials: ["DAYTONA_API_KEY"] },
-  "agents.ambiguous-cloud-code": { provider: "daytona", fields: ["imageDigest", "imageRef", "region", "disposableNamespace", "qualifiedHarness"], credentials: ["ANTHROPIC_API_KEY", "DAYTONA_API_KEY"] },
   "execution-environments.add-computer": { provider: "ssh", fields: ["hostname", "port", "login", "hostKeySha256", "knownHosts", "allowedRemoteRoot", "privateKeyEnv", "qualifiedHarness"], credentials: [] },
   "execution-environments.test-computer": { provider: "ssh", fields: ["hostname", "port", "login", "hostKeySha256", "knownHosts", "allowedRemoteRoot", "privateKeyEnv", "qualifiedHarness"], credentials: [] },
   "assistant-connections.connect-external-assistant": { provider: "chatgpt", fields: ["operatorRef", "chatgptAuthorizationRef", "operatorMode"], credentials: [] },
   "agents.existing-grok-bot": { provider: "grok", fields: ["botId", "endpoint", "challengeMethod", "credentialEnvName", "operatorRef", "botAuthorizationRef", "operatorMode"], credentials: [] },
   "agents.hire-claude-code": { provider: "claude", fields: ["targetRef", "harnessExecutable", "model", "accountBindingRef"], credentials: ["ANTHROPIC_API_KEY"] },
-  "agents.hire-needs-account": { provider: "claude", fields: ["targetRef", "harnessExecutable", "model", "accountBindingRef"], credentials: ["ANTHROPIC_API_KEY"] },
   "runs-adapters.validate-hire": { provider: "claude", fields: ["targetRef", "harnessExecutable", "model", "accountBindingRef"], credentials: ["ANTHROPIC_API_KEY"] },
   "runs-adapters.upgrade-runner": { provider: "claude", fields: ["targetRef", "harnessExecutable", "model", "accountBindingRef", "legacySettingsRef"], credentials: ["ANTHROPIC_API_KEY"] },
 } as const;

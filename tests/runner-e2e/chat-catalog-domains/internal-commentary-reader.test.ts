@@ -32,6 +32,35 @@ function fixture() {
 beforeEach(() => { install.mockClear(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 describe("real commentary reader identity lifetime", () => {
+  it("accepts the actual consumed fetch Response without cancelling its locked body", async () => {
+    const f = fixture(); const response = new Response(JSON.stringify({ user: { id: "casey" } }), { headers: { "content-type": "application/json" } });
+    const cancel = vi.spyOn(response.body!, "cancel"); vi.stubGlobal("fetch", vi.fn(async () => response));
+    const selected = await installCommentaryReader(f.ctx, f.person, "owner");
+    expect(selected.receipt.browserUserId).toBe("casey"); expect(response.bodyUsed).toBe(true); expect(cancel).not.toHaveBeenCalled();
+    expect(f.api.post).toHaveBeenCalledOnce(); await selected.restore(); expect(f.current()).toEqual({ apiUser: "owner", browserUser: "owner" });
+  });
+
+  it("cancels an unread rejected HTTP response and preserves the authentication guard", async () => {
+    const f = fixture(); const response = new Response("synthetic rejected session", { status: 401 });
+    const cancel = vi.spyOn(response.body!, "cancel"); vi.stubGlobal("fetch", vi.fn(async () => response));
+    await expect(installCommentaryReader(f.ctx, f.person, "owner")).rejects.toThrow("could not be independently read");
+    expect(cancel).toHaveBeenCalledOnce(); expect(f.current()).toEqual({ apiUser: "owner", browserUser: "owner" });
+    expect(f.api.post).not.toHaveBeenCalled(); expect(f.evidence).not.toHaveBeenCalled();
+  });
+  it("preserves the real JSON parse failure instead of replacing it with consumed-stream cleanup failure", async () => {
+    const f = fixture(); const response = new Response("{", { headers: { "content-type": "application/json" } });
+    const cancel = vi.spyOn(response.body!, "cancel"); vi.stubGlobal("fetch", vi.fn(async () => response));
+    await expect(installCommentaryReader(f.ctx, f.person, "owner")).rejects.toBeInstanceOf(SyntaxError);
+    expect(response.bodyUsed).toBe(true); expect(cancel).not.toHaveBeenCalled(); expect(f.current()).toEqual({ apiUser: "owner", browserUser: "owner" });
+    expect(f.api.post).not.toHaveBeenCalled(); expect(f.evidence).not.toHaveBeenCalled();
+  });
+  it("preserves the wrong-person denial after a successful real response read", async () => {
+    const f = fixture(); const response = new Response(JSON.stringify({ user: { id: "other-person" } }));
+    const cancel = vi.spyOn(response.body!, "cancel"); vi.stubGlobal("fetch", vi.fn(async () => response));
+    await expect(installCommentaryReader(f.ctx, f.person, "owner")).rejects.toThrow("same real reader");
+    expect(cancel).not.toHaveBeenCalled(); expect(f.current()).toEqual({ apiUser: "owner", browserUser: "owner" });
+    expect(f.api.post).not.toHaveBeenCalled(); expect(f.evidence).not.toHaveBeenCalled();
+  });
   it("aligns real API/browser/conversation identities and restores the original owner only once", async () => {
     const f = fixture(); const selected = await installCommentaryReader(f.ctx, f.person, "owner");
     expect(f.current()).toEqual({ apiUser: "casey", browserUser: "casey" });
