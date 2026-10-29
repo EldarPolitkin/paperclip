@@ -306,9 +306,11 @@ export function agentDirectoryWorkingCopyService(db: Db, get: (companyId: string
         eq(copies.runId, expectedPrior.runId), eq(copies.agentId, input.agentId))).for("update");
       if (!lockedPrior || !isDeepStrictEqual(adoptionAuthority(lockedPrior), adoptionAuthority(expectedPrior))) {
         const fields = ["state", "receipt", "baseHash", "localRoot", "executionRoot", "location", "processStoppedAt", "responsibleUserId", "entryFile", "attempts", "candidateHash", "errorCode", "errorMessage", "baseRevisionId", "candidateBase64", "createdAt"] as const;
-        throw conflict("Agent directory ownership changed", { stage: "locked_adoption_authority",
-          predecessorPresent: Boolean(lockedPrior), observedAfterInitialRead: true,
-          changedFields: lockedPrior ? fields.filter(field => !isDeepStrictEqual(lockedPrior[field], expectedPrior[field])) : [] });
+        const diagnostic = { stage: "locked_adoption_authority", predecessorPresent: Boolean(lockedPrior), observedAfterInitialRead: true,
+          changedFields: lockedPrior ? fields.filter(field => !isDeepStrictEqual(lockedPrior[field], expectedPrior[field])) : [] };
+        logger.warn({ companyId: input.companyId, agentId: input.agentId, runId: input.runId, previousRunId: input.previousRunId,
+          adoptionConflict: diagnostic }, "Agent directory adoption conflict");
+        throw conflict("Agent directory ownership changed", diagnostic);
       }
       prior = lockedPrior;
       const current = await inspectAgentDirectory(canonical);
@@ -327,8 +329,10 @@ export function agentDirectoryWorkingCopyService(db: Db, get: (companyId: string
           successorAbsent: sql<boolean>`${copies.receipt}->>'retainedByRunId' IS NULL`,
           receiptMatches: sql<boolean>`${copies.receipt} IS NOT DISTINCT FROM ${JSON.stringify(prior.receipt)}::jsonb`,
         }).from(copies).where(and(eq(copies.companyId, input.companyId), eq(copies.runId, prior.runId), eq(copies.agentId, input.agentId)));
-        throw conflict("Agent directory ownership changed", { stage: "adoption_claim", observedAfterClaim: true,
-          predecessorPresent: Boolean(conditions), conditions: conditions ?? null });
+        const diagnostic = { stage: "adoption_claim", observedAfterClaim: true, predecessorPresent: Boolean(conditions), conditions: conditions ?? null };
+        logger.warn({ companyId: input.companyId, agentId: input.agentId, runId: input.runId, previousRunId: input.previousRunId,
+          adoptionConflict: diagnostic }, "Agent directory adoption conflict");
+        throw conflict("Agent directory ownership changed", diagnostic);
       }
       const { createdAt: _createdAt, updatedAt: _updatedAt, ...values } = prior;
       const [next] = await tx.insert(copies).values({ ...values, runId: input.runId, responsibleUserId: bound.onBehalfOfUserId!, state: "prepared",

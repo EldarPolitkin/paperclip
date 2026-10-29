@@ -27,6 +27,7 @@ import { remoteTerminationReceipt } from "../services/remote-execution-terminati
 import { AgentDirectoryReuseInvalidatedError, agentDirectoryWorkingCopyService } from "../services/agent-directory-working-copies.js";
 import { withDirectoryMergeLock } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import { heartbeatRunEvents } from "@paperclipai/db";
+import { logger } from "../middleware/logger.js";
 
 const external = resolveExternalTestDatabaseUrl("PAPERCLIP_AGENT_DIRECTORY_TEST_DATABASE_URL");
 
@@ -429,6 +430,8 @@ describe("persistent agent directories", () => {
       const first = await run();
       expect(await copies.hasChanges({ companyId, runId: first.runId })).toBe(false);
       const secondId = await nextRun();
+      const warning = vi.spyOn(logger, "warn");
+      const privateValue = "private-materialization-/tmp/untrusted-token-do-not-log";
       const transaction = db.transaction.bind(db);
       let calls = 0;
       let injected = false;
@@ -436,7 +439,7 @@ describe("persistent agent directories", () => {
         if (++calls === 2) {
           injected = true;
           const prior = (await copies.get(companyId, first.runId))!;
-          const values = change === "materialization" ? { receipt: { ...prior.receipt, materializationIdentity: "different-materialization" } }
+          const values = change === "materialization" ? { receipt: { ...prior.receipt, materializationIdentity: privateValue } }
             : change === "checkpoint" ? { receipt: { ...prior.receipt, checkpointState: "saved" } }
               : change === "stopped" ? { processStoppedAt: new Date() } : { state: "pending_collection" };
           await db.update(agentInstructionWorkingCopies).set({ ...values, updatedAt: new Date(Date.now() + 1000) })
@@ -450,16 +453,22 @@ describe("persistent agent directories", () => {
           .rejects.toMatchObject({ status: 409, details: { stage: "locked_adoption_authority", predecessorPresent: true,
             observedAfterInitialRead: true, changedFields: expect.arrayContaining([change === "materialization" || change === "checkpoint" ? "receipt" : change === "stopped" ? "processStoppedAt" : "state"]) } });
         expect(injected).toBe(true);
+        expect(warning).toHaveBeenCalledWith({ companyId, agentId, runId: secondId, previousRunId: first.runId,
+          adoptionConflict: { stage: "locked_adoption_authority", predecessorPresent: true, observedAfterInitialRead: true,
+            changedFields: [change === "materialization" || change === "checkpoint" ? "receipt" : change === "stopped" ? "processStoppedAt" : "state"] } },
+          "Agent directory adoption conflict");
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(privateValue);
         expect(await copies.get(companyId, secondId)).toBeNull();
         expect((await copies.get(companyId, first.runId))?.receipt?.retainedByRunId).toBeUndefined();
         expect(await fs.readFile(path.join(root, entryFile), "utf8")).toBe(initial);
-      } finally { spy.mockRestore(); }
+      } finally { spy.mockRestore(); warning.mockRestore(); }
     });
 
     it("reports closed claim predicates when retirement wins before the final owner read", async () => {
       const first = await run();
       expect(await copies.hasChanges({ companyId, runId: first.runId })).toBe(false);
       const secondId = await nextRun();
+      const warning = vi.spyOn(logger, "warn");
       const transaction = db.transaction.bind(db);
       let injected = false;
       const spy = vi.spyOn(db, "transaction").mockImplementation((async (callback, options) => {
@@ -476,9 +485,13 @@ describe("persistent agent directories", () => {
           .rejects.toMatchObject({ status: 409, details: { stage: "adoption_claim", observedAfterClaim: true,
             predecessorPresent: true, conditions: { unchangedTurn: false, timestampMatches: true, baselineMatches: true,
               localRootMatches: true, unstopped: true, successorAbsent: true, receiptMatches: true } } });
+        expect(warning).toHaveBeenCalledWith({ companyId, agentId, runId: secondId, previousRunId: first.runId,
+          adoptionConflict: { stage: "adoption_claim", observedAfterClaim: true, predecessorPresent: true,
+            conditions: { unchangedTurn: false, timestampMatches: true, baselineMatches: true, localRootMatches: true,
+              unstopped: true, successorAbsent: true, receiptMatches: true } } }, "Agent directory adoption conflict");
         expect(await copies.get(companyId, secondId)).toBeNull();
         expect((await copies.get(companyId, first.runId))?.receipt?.retainedByRunId).toBeUndefined();
-      } finally { spy.mockRestore(); }
+      } finally { spy.mockRestore(); warning.mockRestore(); }
     });
 
     it("allows only one stale concurrent adoption with identical updatedAt timestamps", async () => {
