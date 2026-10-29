@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, parseObserverDiagnostic, type SocketDiagnostic, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
+import { attachTargetObserver, healthRequest, observeSocket, observeSocketSync, peerInode, nativeHealthResponse, parseObserverDiagnostic, type SocketDiagnostic, type KernelSyncPort, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 function kernel() {
   const data = new Map<string, string>(), dirs = new Map<string, string[]>(), links = new Map<string, string>(); let now = 0;
   data.set("/proc/stat", "btime 1000000000\n"); dirs.set("/proc", ["90", "200", "205", "210", "220"]);
@@ -12,7 +12,11 @@ function kernel() {
   data.set("/proc/90/net/tcp", table); data.set("/proc/90/net/tcp6", "sl local_address rem_address st\n"); links.set("/proc/220/fd/4", "socket:[555]");
   const reads: string[] = [];
   const port: KernelPort = { now: () => now, read: async p => { reads.push(p); if (!data.has(p)) throw Error("missing"); return data.get(p)!; }, list: async p => { if (!dirs.has(p)) throw Error("missing"); return dirs.get(p)!; }, link: async p => { if (!links.has(p)) throw Error("missing"); return links.get(p)!; } };
-  return { port, data, dirs, links, reads, expire: () => { now = 1000; } };
+  const sync: KernelSyncPort = { now: () => now,
+    read: p => { reads.push(p); if (!data.has(p)) throw Error("missing"); return data.get(p)!; },
+    list: p => { if (!dirs.has(p)) throw Error("missing"); return dirs.get(p)!; },
+    link: p => { if (!links.has(p)) throw Error("missing"); return links.get(p)!; } };
+  return { port, sync, data, dirs, links, reads, expire: () => { now = 1000; } };
 }
 const socket = { localAddress: "127.0.0.1", remoteAddress: "127.0.0.1", localPort: 31097, remotePort: 40000 };
 const born = (pid: number) => new Date((1000000000 + pid) * 1000).toISOString();
@@ -114,5 +118,54 @@ describe("content-free observer failure diagnostics", () => {
   it("refuses arbitrary diagnostic keys, values and unbounded counters", async () => {
     const k = kernel(); const d = await attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, armed: () => true, on: () => {}, off: () => {}, save: async () => {} })();
     for (const v of [{ ...d, body: "WITHHELD" }, { ...d, requestStart: Infinity }, { ...d, requestStart: 65536 }, { ...d, channelState: "WITHHELD" }, { ...d, outcomes: { ...d.outcomes, WITHHELD: 1 } }]) expect(parseObserverDiagnostic(v)).toBeUndefined();
+  });
+});
+
+describe("bounded synchronous request-start collector", () => {
+  it("uses the same full proof algorithm synchronously before returning from the real channel hook", async () => {
+    const k = kernel(), callbacks = new Map<string, (m: unknown) => void>(), saved: PeerObservation[][] = [];
+    const close = attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, kernelSync: k.sync, armed: () => true, on: (n, cb) => callbacks.set(n, cb), off: n => { callbacks.delete(n); }, save: async rows => { saved.push(rows); } });
+    const m = { request: { method: "GET", url: "/api/health" }, response: { statusCode: 503 }, socket };
+    callbacks.get("http.server.request.start")!(m);
+    expect(k.reads.filter(v => v === "/proc/220/stat")).toHaveLength(3);
+    callbacks.get("http.server.response.finish")!(m);
+    const d = await close(); expect(d.collectorMode).toBe("SYNC_REQUEST_START"); expect(d.outcomes.OWNERSHIP_PROVEN).toBe(1);
+    expect(nativeHealthResponse(saved[0]![0]!, binding, { pid: 90, born: born(90) })).toBe(true);
+    expect(observeSocketSync(kernel().sync, socket, 90, 100)).toEqual(await observeSocket(kernel().port, socket, 90, 100));
+  });
+  it("filters known foreign UID before namespace and descriptor reads without skipping an unknown owner", () => {
+    const k = kernel(); k.dirs.get("/proc")!.unshift("999"); k.data.set("/proc/999/status", "Uid: 0 0 0 0\n");
+    const link = k.sync.link, list = k.sync.list;
+    k.sync.link = name => { if (name.includes("/999/")) throw Error("foreign namespace must not be read"); return link(name); };
+    k.sync.list = name => { if (name.includes("/999/")) throw Error("foreign descriptors must not be read"); return list(name); };
+    expect(observeSocketSync(k.sync, socket, 90, 100)).toBeDefined();
+    k.data.delete("/proc/999/status"); expect(observeSocketSync(k.sync, socket, 90, 100)).toBeUndefined();
+  });
+  it("examines a possible owner beyond1024descriptors under the unchanged global caps", () => {
+    const k = kernel(), fds = Array.from({ length: 1026 }, (_, i) => String(i + 10)); k.dirs.set("/proc/220/fd", fds);
+    for (const fd of fds) k.links.set(`/proc/220/fd/${fd}`, "socket:[999]"); k.links.set(`/proc/220/fd/${fds.at(-1)}`, "socket:[555]");
+    const reports: SocketDiagnostic[] = []; expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeDefined(); expect(reports[0]!.operations).toBeLessThanOrEqual(8192);
+    const many = Array.from({ length: 8200 }, (_, i) => String(i + 10)); k.dirs.set("/proc/220/fd", many);
+    for (const fd of many) k.links.set(`/proc/220/fd/${fd}`, "socket:[999]");
+    reports.length = 0; expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined(); expect(reports[0]!.outcome).toBe("DEADLINE_OR_OP_LIMIT");
+  });
+  it("refuses a same-UID denied descriptor instead of skipping a possible owner", () => {
+    const k = kernel(), link = k.sync.link, reports: SocketDiagnostic[] = [];
+    k.sync.link = name => { if (name === "/proc/220/fd/4") throw Object.assign(Error("WITHHELD"), { code: "EPERM" }); return link(name); };
+    expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined(); expect(reports[0]!.outcome).toBe("PROC_DENIED"); expect(JSON.stringify(reports)).not.toContain("WITHHELD");
+  });
+  it("keeps final reverse tuple and generation checks and rejects IO that crosses100ms", () => {
+    for (const kind of ["generation", "tuple", "deadline"]) {
+      const k = kernel(), read = k.sync.read, reports: SocketDiagnostic[] = []; let reads = 0;
+      k.sync.read = name => { const value = read(name);
+        if (kind === "generation" && name === "/proc/220/stat" && ++reads > 1) return value.replace(/22000$/, "99999");
+        if (kind === "tuple" && name === "/proc/90/net/tcp" && ++reads > 1) return "sl local_address rem_address st\n";
+        if (kind === "deadline" && name === "/proc/90/net/tcp") k.expire();
+        return value; };
+      expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined(); expect(reports[0]!.outcome).toBe(kind === "deadline" ? "DEADLINE_OR_OP_LIMIT" : "GENERATION_CHANGED");
+    }
+  });
+  it.each(["/api/x/../health", "/api/./health", String.raw`/api\health`, String.raw`/\foreign/api/health`, "//foreign/api/health"])("does not normalize a foreign raw path %s into health", raw => {
+    expect(healthRequest("GET", raw)).toBe(false); expect(healthRequest("GET", "/api/health?token=not-recorded")).toBe(true);
   });
 });

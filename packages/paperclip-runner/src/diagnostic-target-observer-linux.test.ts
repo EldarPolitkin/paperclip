@@ -251,16 +251,6 @@ async function request(f: Fixture, provider: Owned, mode: "node" | "curl" | "kee
   return row;
 }
 const binding = (f: Fixture, provider: Owned) => ({ runnerPid: f.runner.pid, runnerBorn: f.runner.born, providerPid: provider.identity.pid, providerBorn: provider.identity.born, currentRunBound: true });
-async function stopExact(p: ProcessScalar, ticks: number) {
-  requireRemote();
-  const stillOwned = async () => { try { const now = await identity(p.pid, ticks); if (now.ticks !== p.ticks || now.uid !== p.uid || now.namespace !== p.namespace) throw new Error("Owned cleanup generation mismatch"); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; } };
-  if (!await stillOwned()) return;
-  process.kill(p.pid, "SIGTERM");
-  for (let i = 0; i < 50; i++) { if (!await stillOwned()) return; await delay(10); }
-  if (await stillOwned()) process.kill(p.pid, "SIGKILL");
-  for (let i = 0; i < 50; i++) { if (!await stillOwned()) return; await delay(10); }
-  throw new Error("Exact owned process cleanup did not close");
-}
 async function confirmProviderDrain(io: { connected(): boolean; request(): void; receipt(): Promise<{ kind?: unknown }>; disconnect(): Promise<void> }) {
   if (!io.connected()) throw new Error("Provider closed without its children-empty receipt");
   io.request();
@@ -288,9 +278,7 @@ afterEach(async () => {
       } catch { unknownCleanup = true; }
     }
     try { if (f.target.child.connected) f.target.child.send({ kind: "close" }); } catch { /* Exact target cleanup follows. */ }
-    for (const p of [...f.clients, ...f.providers.filter(p => persistentCustody.canStop(p.child)).map(p => p.identity), f.target.identity]) {
-      try { await stopExact(p, f.ticks); } catch { unknownCleanup = true; }
-    }
+
   }
   await finishOwnedCleanup(persistentCustody, directChildren, privateRoots, stopHandle,
     root => rm(root, { recursive: true, force: true }), unknownCleanup);
