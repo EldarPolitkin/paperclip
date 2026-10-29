@@ -891,6 +891,21 @@ async function materializeDecisionEffect(input: {
       wakePolicy: null,
       maxAttempts: 3,
     });
+    if (effect.terminal) {
+      // Commit the visible problem with its recovery action. A crash after this
+      // transaction must not leave a running run behind a terminal coordinator.
+      await input.tx.update(heartbeatRuns).set({
+        status: "failed", nativePhase: "terminal_failure", nativePhaseUpdatedAt: new Date(),
+        finishedAt: sql`coalesce(${heartbeatRuns.finishedAt}, now())`,
+        errorCode: effect.cause, error: `The native work outcome is unverified. ${effect.nextAction}`,
+        resultJson: sql`coalesce(${heartbeatRuns.resultJson}, '{}'::jsonb) || ${JSON.stringify({
+          finalizationPhase: "terminal_failure", failureCode: effect.cause,
+          originalFailureCode: effect.cause, nextAttemptAt: null,
+        })}::jsonb`, updatedAt: new Date(),
+      }).where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId),
+        eq(heartbeatRuns.nativeIssueId, input.issue.id), eq(heartbeatRuns.runtimeMode, "native"),
+        inArray(heartbeatRuns.status, ["running", "succeeded", "failed"])));
+    }
     return {
       effectKind: effect.kind,
       targetType: "issue_recovery_action",

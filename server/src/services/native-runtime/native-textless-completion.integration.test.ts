@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents, agentWakeupRequests, companies, completionContracts, createDb, heartbeatRuns,
   issueRecoveryActions, issues, nativeRunFinalizations, nativeRunResults, statusDecisions,
@@ -95,6 +95,37 @@ describe("textless OpenCode durable finalization", () => {
     expect(await db.select().from(statusDecisions).where(eq(statusDecisions.runId, fixture.runId))).toHaveLength(1);
     expect(await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, fixture.issueId))).toEqual(recovery);
     expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.nativeIssueId, fixture.issueId))).toHaveLength(1);
+  });
+
+  it("commits the terminal run and recovery atomically before later projection, even if that caller stops", async () => {
+    const fixture = await seed("in_progress");
+    const transaction = db.transaction.bind(db);
+    let stopped = false;
+    const intercept = (async (...args: Parameters<typeof db.transaction>) => {
+      const value = await transaction(...args);
+      if (!stopped && value && typeof value === "object" && "decision" in value &&
+          (value as { decision: { runId: string } }).decision.runId === fixture.runId) {
+        stopped = true;
+        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+        const [coordinator] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId));
+        expect(run).toMatchObject({ status: "failed", nativePhase: "terminal_failure", errorCode: "native_textless_completion_unresolved" });
+        expect(run!.finishedAt).not.toBeNull();
+        expect(coordinator).toMatchObject({ phase: "terminal_failure", nextAttemptAt: null });
+        throw new Error("caller_stopped_after_atomic_decision");
+      }
+      return value;
+    }) as typeof db.transaction;
+    const spy = vi.spyOn(db, "transaction").mockImplementation(intercept);
+    try {
+      expect(await finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded" }))
+        .toMatchObject({ phase: "terminal_failure" });
+    } finally { spy.mockRestore(); }
+    expect(stopped).toBe(true);
+    const wakes = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
+    await expect(finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded" }))
+      .rejects.toThrow("native_finalization_terminal_failure");
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toEqual(wakes);
+    expect(await db.select().from(statusDecisions).where(eq(statusDecisions.runId, fixture.runId))).toHaveLength(1);
   });
 
   it("still materializes ordinary incomplete-result recovery", async () => {
