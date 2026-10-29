@@ -165,7 +165,7 @@ it("preserves native Cloud tool identity and redacted output through the real Ru
   }
 }, 30_000);
 
-async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean) {
+async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean, planning = false) {
   const root = await mkdtemp("/tmp/cc-question-");
   const runtime = join(root, "cloud");
   const configPath = join(runtime, "config.json");
@@ -185,6 +185,15 @@ async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean) 
       const path = target.pathname, method = init.method ?? 'GET';
       fs.appendFileSync(${JSON.stringify(fetchLog)}, JSON.stringify({ method, path }) + '\\n', { mode: 0o600 });
       if (path === '/v1/agents' && method === 'POST') {
+        if (${planning}) {
+          const body = JSON.parse(String(init.body));
+          assert.equal(body.mode, 'agent');
+          const envelope = JSON.parse(body.prompt.text.split('\\n\\nPaperclip task:\\n').at(-1));
+          assert.equal(envelope.executionMode, 'plan');
+          assert.equal(envelope.task.workMode, 'planning');
+          assert.equal(envelope.planningContext.baseRevisionId, 'plan-revision-3');
+          assert.equal(envelope.planningContext.markdown, '# Pinned canonical plan');
+        }
         agentId = JSON.parse(String(init.body)).agentId;
         return json({ agent: { id: agentId, status: 'ACTIVE', env: { type: 'cloud' }, url: 'https://cursor.com/agents/' + agentId, createdAt: now, updatedAt: now, latestRunId: runId }, run: run() });
       }
@@ -241,9 +250,11 @@ async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean) 
         skills: [], mcp: { assignmentSetId: "none", digest, bindingId: null },
       };
       const input: NativeExecutionInputV5 = {
-        schema: "paperclip.native-execution-input.v5", executionMode: "default", planningContext: null,
+        schema: "paperclip.native-execution-input.v5", executionMode: planning ? "plan" : "default",
+        planningContext: planning ? { documentId: "plan-document", baseRevisionId: "plan-revision-3", baseRevisionNumber: 3,
+          markdown: "# Pinned canonical plan", sha256: createHash("sha256").update("# Pinned canonical plan").digest("hex"), reviewContext: { feedback: "Keep the requested scope" } } : null,
         binding: { companyId: "company", agentId: "agent", issueId: "issue", runId: "00000000-0000-4000-8000-000000000763", executionWorkspaceId: "workspace" },
-        task: { identifier: "CLOUD-QUESTION", title: "Ask the assigned question", description: null, prompt: "Ask before proceeding.", workMode: "standard" },
+        task: { identifier: "CLOUD-QUESTION", title: "Ask the assigned question", description: null, prompt: "Ask before proceeding.", workMode: planning ? "planning" : "standard" },
         workspace: { cwd: root, repoUrl: null, repoRef: null, branchName: null },
         session: { normalizedSessionId, driverKind: "cursor_cloud_api", protocolVersion: 1, lifecyclePolicy: { mode: "per_turn", idleTimeoutMs: null } },
         provider: { kind: "cursor_cloud", model: "explicit-model", cursorCloud },
@@ -314,6 +325,10 @@ it.each([0, 18_000])("delivers an applied Cloud question and courtesy-interrupt 
 it.each([0, 18_000])("settles a governed Cloud question after its allowed cancellation latency (%ims)", async terminalDelayMs => {
   await cloudQuestionHandoff(terminalDelayMs, true);
 }, 45_000);
+
+it("preserves semantic planning and its pinned revision through the real Rust Cloud default harness", async () => {
+  await cloudQuestionHandoff(0, true, true);
+}, 30_000);
 
 async function cloudColdAuthorityRotation(instructions: string, validShutdown = true) {
   const root = await mkdtemp("/tmp/cc-cold-rotation-");
