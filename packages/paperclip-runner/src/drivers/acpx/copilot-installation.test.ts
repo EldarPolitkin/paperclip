@@ -89,9 +89,18 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(81);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(82);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:05b61b2440ed48cea14a58c7954aa4c27694f1ea815031bc211de2b2a6b99af9");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:e0eddf258e824bb0cd7e0ec0a12dc5b8eeff72262e176249b5e6e7d5ea977caf");
+  });
+
+  it("preserves published profile 81 while admitting combined profile 82", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v81-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("8b9d6b0e7ba3bb34141275f1a62701c3b69e1e917260d3c9984fbaeba6d413b1");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    expect(isSupportedAcpxProfileVersion("copilot", 81)).toBe(true);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+      agentProfileVersion: 81, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
   });
 
 it("preserves published v65 while binding retained-maintenance waits in v66", async () => {
@@ -165,7 +174,7 @@ it("preserves the historical sleep-maintenance v64 identity", async () => {
       agentProfileVersion: 75, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
   });
 
-  it("retains published profile 80 while admitting the merged profile 81", async () => {
+  it("retains published profile 80 while admitting the current profile", async () => {
     const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v80-identity.json", import.meta.url));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe("bc079444fb31155329a64046a8090bf8dc14ab0b938ad5146530aff58a90b0f2");
     const prior = JSON.parse(bytes.toString("utf8"));
