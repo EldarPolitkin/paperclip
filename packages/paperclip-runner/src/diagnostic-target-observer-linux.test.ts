@@ -32,7 +32,8 @@ it("pure context guard accepts only the source/metadata-bound remote lane, never
 });
 
 // Fixture code is written/executed only inside the remote suite. The target
-// ends 503 immediately; the observer cannot delay, proxy or fabricate it.
+// returns 503 without an application delay. Synchronous observer work adds
+// measured request-start overhead; no un-instrumented latency is claimed.
 const serverProgram = `import http from 'node:http';
 const server=http.createServer((_req,res)=>{res.statusCode=503;res.end('unavailable');});
 server.listen(0,'127.0.0.1',()=>process.send({kind:'ready',pid:process.pid,port:server.address().port}));
@@ -248,6 +249,13 @@ async function request(f: Fixture, provider: Owned, mode: "node" | "curl" | "kee
   else expect((await message(provider, "done")).code).toBe(0);
   const rows = await observations(f.output), row = rows.find(r => r.chain[0]?.pid === child.pid && r.chain[0].born === child.born);
   if (!row) throw new Error("Actual short-lived client was not captured; no missing-as-pass allowance");
+  const snapshot = await diagnosticSnapshot(f.output);
+  expect(snapshot.state).toBe("PRESENT");
+  if (!("diagnostic" in snapshot) || !snapshot.diagnostic) throw new Error("Owned closed diagnostic snapshot unavailable");
+  expect(snapshot.diagnostic.collectorMode).toBe("SYNC_REQUEST_START");
+  expect(snapshot.diagnostic.maxElapsedMs).toBeLessThanOrEqual(100);
+  expect(snapshot.diagnostic.maxOperations).toBeLessThanOrEqual(8192);
+  expect(snapshot.diagnostic.maxRequestStartMs).toBeGreaterThanOrEqual(snapshot.diagnostic.maxElapsedMs);
   return row;
 }
 const binding = (f: Fixture, provider: Owned) => ({ runnerPid: f.runner.pid, runnerBorn: f.runner.born, providerPid: provider.identity.pid, providerBorn: provider.identity.born, currentRunBound: true });
@@ -285,7 +293,7 @@ afterEach(async () => {
 });
 
 describe.runIf(eligible)("remote-only Node24 Linux AWS observer qualification (helper calibration, not Product E2E)", () => {
-  it.each(["node", "curl"] as const)("captures an ordinary short-lived %s client without prolonging response or client", async mode => {
+  it.each(["node", "curl"] as const)("captures an ordinary short-lived %s client with measured request-start observation work", async mode => {
     const f = await fixture(), row = await request(f, f.providers[0]!, mode);
     expect(nativeHealthResponse(row, binding(f, f.providers[0]!), f.target.identity)).toBe(true);
   }, 20000);

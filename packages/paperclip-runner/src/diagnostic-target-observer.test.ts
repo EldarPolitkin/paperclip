@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachTargetObserver, healthRequest, observeSocket, observeSocketSync, peerInode, nativeHealthResponse, parseObserverDiagnostic, type SocketDiagnostic, type KernelSyncPort, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
+import { attachTargetObserver, healthRequest, observeSocket, observeSocketSync, peerInode, nativeHealthResponse, parseObserverDiagnostic, directoryCursor, type SocketDiagnostic, type KernelSyncPort, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 function kernel() {
   const data = new Map<string, string>(), dirs = new Map<string, string[]>(), links = new Map<string, string>(); let now = 0;
   data.set("/proc/stat", "btime 1000000000\n"); dirs.set("/proc", ["90", "200", "205", "210", "220"]);
@@ -90,8 +90,8 @@ describe("content-free observer failure diagnostics", () => {
     if (expected === "GENERATION_CHANGED") { const read = k.port.read; let n = 0; k.port.read = async p => { const v = await read(p); return p === "/proc/220/stat" && ++n > 1 ? v.replace(/22000$/, "99999") : v; }; }
     expect(await observeSocket(k.port, socket, 90, 100, d => reports.push(d))).toBeUndefined();
     expect(reports).toHaveLength(1); expect(reports[0]!.outcome).toBe(expected);
-    expect(Object.keys(reports[0]!).sort()).toEqual(["elapsedMs", "operations", "outcome", "procDeniedCount"]);
-    expect(JSON.stringify(reports)).not.toMatch(/WITHHELD|path|body|stack|EACCES/);
+    expect(Object.keys(reports[0]!).sort()).toEqual(["elapsedMs", "errno", "failureStage", "operations", "outcome", "procDeniedCount", "subject"]);
+    expect(JSON.stringify(reports)).not.toMatch(/WITHHELD|path|body|stack/);
   });
   it("persists channel and matched-finish counters when ownership is unknown, without reading content", async () => {
     const k = kernel(), callbacks = new Map<string, (m: unknown) => void>(), saved: unknown[] = [], diagnostics: unknown[] = [];
@@ -167,5 +167,57 @@ describe("bounded synchronous request-start collector", () => {
   });
   it.each(["/api/x/../health", "/api/./health", String.raw`/api\health`, String.raw`/\foreign/api/health`, "//foreign/api/health"])("does not normalize a foreign raw path %s into health", raw => {
     expect(healthRequest("GET", raw)).toBe(false); expect(healthRequest("GET", "/api/health?token=not-recorded")).toBe(true);
+  });
+});
+
+describe("retained FD-directory iterator lifecycle", () => {
+  function adapter() {
+    const k = kernel(), open = new Set<string>(), closed: string[] = []; let reads = 0;
+    const openDirectory = (name: string) => {
+      if (open.has(name)) throw Error("duplicate directory"); open.add(name);
+      const names = [...k.dirs.get(name)!]; if (name === "/proc/90/fd") names.push("99"); let i = 0;
+      return directoryCursor({ readSync: () => { reads++; return i < names.length ? { name: names[i++]! } : null; }, closeSync: () => { if (!open.delete(name)) throw Error("double close"); closed.push(name); } });
+    };
+    const link = k.sync.link;
+    k.sync.link = name => {
+      if (name === "/proc/90/fd/99") { if (!open.has("/proc/90/fd")) throw Object.assign(Error("WITHHELD"), { code: "ENOENT" }); return "/proc/90/fd"; }
+      return link(name);
+    };
+    return { k, open, closed, openDirectory, reads: () => reads };
+  }
+  it("reproduces the closed-name-list failure and proves the real retained-cursor adapter", () => {
+    const old = adapter(), previousList = old.k.sync.list, oldReports: SocketDiagnostic[] = [];
+    old.k.sync.list = name => {
+      if (!/^\/proc\/\d+\/fd$/.test(name)) return previousList(name);
+      const cursor = old.openDirectory(name), names: string[] = [];
+      try { for (let value = cursor.read(); value !== null; value = cursor.read()) names.push(value); } finally { cursor.close(); }
+      return names;
+    };
+    expect(observeSocketSync(old.k.sync, socket, 90, 100, d => oldReports.push(d))).toBeUndefined();
+    expect(oldReports[0]).toMatchObject({ outcome: "PROCESS_METADATA_UNAVAILABLE", failureStage: "FD_LINK", errno: "ENOENT", subject: "SELF" });
+    const retained = adapter(), reports: SocketDiagnostic[] = []; retained.k.sync.openDirectory = retained.openDirectory;
+    expect(observeSocketSync(retained.k.sync, socket, 90, 100, d => reports.push(d))).toBeDefined();
+    expect(reports[0]!.outcome).toBe("OWNERSHIP_PROVEN"); expect(retained.open.size).toBe(0);
+    expect(new Set(retained.closed).size).toBe(retained.closed.length); expect(retained.reads()).toBeGreaterThan(0);
+  });
+  it("closes the retained cursor in finally on link error and never treats an unknown owner as absent", () => {
+    const f = adapter(), link = f.k.sync.link, reports: SocketDiagnostic[] = []; f.k.sync.openDirectory = f.openDirectory;
+    f.k.sync.link = name => { if (name === "/proc/90/fd/99") throw Object.assign(Error("WITHHELD raw body"), { code: "EACCES" }); return link(name); };
+    expect(observeSocketSync(f.k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined(); expect(f.open.size).toBe(0); expect(f.closed).toEqual(["/proc/90/fd"]);
+    expect(reports[0]).toMatchObject({ outcome: "PROC_DENIED", failureStage: "FD_LINK", errno: "EACCES", subject: "SELF" }); expect(JSON.stringify(reports)).not.toMatch(/WITHHELD|raw body|\/proc/);
+    const reading = adapter(), openDirectory = reading.openDirectory, readReports: SocketDiagnostic[] = [];
+    reading.k.sync.openDirectory = name => { const cursor = openDirectory(name); return { read() { throw Object.assign(Error("WITHHELD"), { code: "EIO" }); }, close: () => cursor.close() }; };
+    expect(observeSocketSync(reading.k.sync, socket, 90, 100, d => readReports.push(d))).toBeUndefined(); expect(reading.open.size).toBe(0);
+    expect(readReports[0]).toMatchObject({ failureStage: "FD_READ", errno: "EIO", subject: "SELF" });
+  });
+  it("closes the retained cursor after deadline crossing and rejects disappearing PID status", () => {
+    const f = adapter(), link = f.k.sync.link, reports: SocketDiagnostic[] = []; f.k.sync.openDirectory = f.openDirectory;
+    f.k.sync.link = name => { const v = link(name); if (name === "/proc/90/fd/99") f.k.expire(); return v; };
+    expect(observeSocketSync(f.k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined(); expect(f.open.size).toBe(0); expect(f.closed).toEqual(["/proc/90/fd"]); expect(reports[0]!.outcome).toBe("DEADLINE_OR_OP_LIMIT");
+    const opening = adapter(), open = opening.openDirectory, openReports: SocketDiagnostic[] = [];
+    opening.k.sync.openDirectory = name => { const cursor = open(name); opening.k.expire(); return cursor; };
+    expect(observeSocketSync(opening.k.sync, socket, 90, 100, d => openReports.push(d))).toBeUndefined(); expect(opening.open.size).toBe(0); expect(opening.closed).toEqual(["/proc/90/fd"]); expect(openReports[0]!.outcome).toBe("DEADLINE_OR_OP_LIMIT");
+    const gone = kernel(), read = gone.sync.read, missing: SocketDiagnostic[] = []; gone.sync.read = name => { if (name === "/proc/200/status") throw Object.assign(Error("WITHHELD"), { code: "ENOENT" }); return read(name); };
+    expect(observeSocketSync(gone.sync, socket, 90, 100, d => missing.push(d))).toBeUndefined(); expect(missing[0]).toMatchObject({ failureStage: "OWNER_STATUS", errno: "ENOENT", subject: "OTHER" });
   });
 });
