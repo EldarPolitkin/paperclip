@@ -1,8 +1,8 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { link, lstat, mkdir, open, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CursorCloudClient } from "./cloud-client.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export async function stageCursorCloudArtifact(input: {
   arguments: unknown;
@@ -34,17 +34,38 @@ export async function stageCursorCloudArtifact(input: {
   }
   const contentRef = join(args.sha256, args.filename);
   const target = join(directory, args.filename);
-  let handle;
-  try { handle = await open(target, "wx", 0o600); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const existing = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const temporary = join(directory, `.cursor-cloud-${randomUUID()}.tmp`);
+  input.signal.throwIfAborted();
+  const handle = await open(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  try {
+    const held = await handle.stat();
     try {
-      const stat = await existing.stat();
-      if (!stat.isFile() || stat.size !== bytes.length || (stat.mode & 0o077) !== 0 || createHash("sha256").update(await existing.readFile()).digest("hex") !== args.sha256) throw new Error("Cursor Cloud artifact staging identity conflict");
-    } finally { await existing.close(); }
-    return { ...args, contentRef };
+      await handle.writeFile(bytes); await handle.sync();
+      const current = await lstat(temporary);
+      if (!current.isFile() || current.isSymbolicLink() || current.dev !== held.dev || current.ino !== held.ino || current.size !== bytes.length
+        || (current.mode & 0o077) !== 0 || (process.getuid && current.uid !== process.getuid())) throw new Error("Cursor Cloud artifact temporary ownership changed");
+      input.signal.throwIfAborted();
+      // A hard link publishes complete bytes without overwriting a concurrent final.
+      try { await link(temporary, target); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const existing = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+        try {
+          const stat = await existing.stat();
+          if (!stat.isFile() || stat.size !== bytes.length || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())
+            || createHash("sha256").update(await existing.readFile()).digest("hex") !== args.sha256) throw new Error("Cursor Cloud artifact staging identity conflict");
+        } finally { await existing.close(); }
+      }
+    } finally {
+      const current = await lstat(temporary);
+      if (!current.isFile() || current.isSymbolicLink() || current.dev !== held.dev || current.ino !== held.ino) throw new Error("Cursor Cloud artifact temporary ownership changed");
+      await unlink(temporary);
+    }
+  } finally { await handle.close(); }
+  // EEXIST retries also finish durability after a prior post-publication failure.
+  for (const root of [directory, input.artifactRoot, input.runtimeDirectory]) {
+    const handle = await open(root, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+    try { await handle.sync(); } finally { await handle.close(); }
   }
-  try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
   return { ...args, contentRef };
 }

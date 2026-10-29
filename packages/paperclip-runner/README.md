@@ -244,7 +244,10 @@ It is retained for reconciliation, never reclaimed from its age or PID alone.
 
 Cloud deliverables use `cursor-artifact:<listed relative path>` with the exact
 byte count and SHA-256. Runner downloads the provider artifact to its private
-artifact root before normal deliverable registration. A remote path never grants
+artifact root before normal deliverable registration. Fully verified bytes publish
+atomically without replacing an existing final file; existing files must match the
+claim. A crashed writer can leave an unreferenced private temporary file, which is
+retained rather than mistaken for a completed artifact. A remote path never grants
 access to the controller's project files.
 
 Google Antigravity is an **unqualified, pending** native ACPX integration. The
