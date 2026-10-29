@@ -62,11 +62,12 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Useful task | local and Daytona | Profile9 local exact reply, accepted completion, workspace bytes and downloaded artifact bytes passed; authenticated Daytona remains blocked | partial |
 | Human input and Stop | local and Daytona | Profile9 local Stop, native child loss, semantic answers and plan revision passed with durable decisions and cleanup; Daytona remains | partial |
 | Continuation and child loss | local and Daytona | All local restart, question recovery, native loss and Stop/follow-up cases passed; Daytona remains | partial |
-| Installed distribution | macOS arm64 and Linux x64 | Profile9 eighteen public tarballs, fresh installed CLI setup/offline reuse, immutable Linux image and native real-Daytona smoke passed | passed |
+| Installed distribution | macOS arm64 and Linux x64 | Profile9 installed packages/image passed within their original scope; reconciled pending10 requires fresh native binaries, packages and image | partial |
 | Regression and repository checks | candidate revision | Typecheck/build and both current PR CI suites passed; local full-suite failure and its separate successful three-case reproduction remain recorded | partial |
 
-Current totals: 1 fully passed, 6 partial, 1 unattempted of 8 gates.
-These are profile9 results; a later promotion requires its own artifact checks.
+Current pending10 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
+Profile9 results remain historical support; changed-runtime qualification and a
+later release promotion require fresh evidence and artifact checks.
 Each gate's detailed cells and attempts will be recorded before qualification;
 these grouped gates are not a substitute for per-environment passing evidence.
 
@@ -86,7 +87,11 @@ an environment canary, rejected foreign/ambiguous targets and retired the child.
 All ten original result hashes were independently checked. The four earlier local
 failures remain unchanged alongside their later diagnoses and cleanup receipts.
 
-Daytona has zero passing authenticated cells. Its first launch stopped at
+Historical profile9 Daytona qualification stopped at its first lifecycle case.
+A later independent message-marker control passed all six matchers, durable Done,
+native Succeeded and cleanup on source `50736cb6`, run
+`0a809b5e-9a82-4590-9283-cbaa359f676f`. That is one case, not the full matrix.
+The first launch stopped at
 admission because two executable digests were missing; no task or sandbox was
 created. With the exact image Node/runnerd digests supplied, the first actual
 Stop cell failed before provider startup: setup Test could not reach the global
@@ -99,12 +104,32 @@ separate requirements, including the requested hosted test workspace.
 
 ## Current state
 
-As of 2026-10-29, Kimi9 remains pending and hidden from ordinary selection. Its
-command digest is `sha256:c42fa5361d53081a8bb497c35e1ee2f85e6c26d2e0d59fad14b93d16f810796b`,
-with native patch v6 and unchanged macOS/Linux closures. Dependent profiles are
-Pi34, Grok13 and Copilot81. Published master history takes precedence over
-conflicting unmerged candidate variants; original candidate bytes and commits
-remain on preserved backup refs.
+The shipping baseline is now frozen at master `9f3fc2094f61e311b2c5adb4d5beccefc0199943`.
+The reconciled foundation is `7c6cffafa26c70e50c241c71dd536aa79406041d` and
+product code is `60f0bb7b3171e773f21fe80fb524d9130e36500f`, with 97 and 77
+review paths respectively. Both existing PR branches were updated by fast-forward.
+Published master identity bytes win over conflicting unmerged variants; original
+candidate variants remain in preserved Git history and their evidence receipts.
+
+Current Kimi10 is pending and hidden from ordinary selection, command digest
+`sha256:c8a39af9d580cdb5fe20a3333a566e2f97a1b4ec3a0025cb647d2144df358604`.
+The native2.3.3 patch v6 and vendor closures are unchanged. Current dependent
+identities are Pi35, Copilot82 and Grok14. Earlier prepared qualified10 and
+Copilot82 digests and the `9ba72696` draft image identity are obsolete and must
+not be reused. Qualification will promote a new identity only after live gates.
+
+Master adds reachable notification context/helper environment and Unix Runner
+FIFO/listener/thread behavior, plus connection/restart ownership fixes. This
+changes actual Kimi and native Bash execution, beyond identity text. All twenty
+local/Daytona cells will therefore refresh against pending10, preceded by actual
+native credential/context controls. Old9 grades and native binaries are not
+relabeled as pending10 or as the final release.
+
+The pending10 image build is pinned to product `60f0bb7b`, canonical candidate
+content `af2d4e8d8ea38381eb265dfdf8141d23ca31369bcb7ae12db8c6daa1b34a4e15`.
+Its source was verified through an anonymous public checkout; no operator or
+provider credential is sent to the build. Later test-only changes require a
+canonical image-input comparison, not a rewritten image provenance claim.
 
 The foundation PR #18028 at `08a5516b` and product PR #18029 at `6123a67a`
 had green CI at those heads. The product review was Greptile 5/5 with one
@@ -170,6 +195,45 @@ catalog/producer/observer/storage checks passed 227 tests with one existing skip
 and harness typecheck passed. Native profile9, vendor closures and image inputs
 are unchanged; retain the fresh local evidence at `6123a67a` and pin a fresh
 Daytona campaign to the repaired source rather than relabeling old attempts.
+
+Additional profile9 Daytona first divergences and shipping reconciliation:
+
+- Restoring source did not restore its ignored Linux companion manifest/binary.
+  The next run failed closed before launch. Exact image9 assets were recovered
+  under a Linux-only release descriptor with their original source `5f4c9edc`;
+  no other platform binary was invented or relabeled. Actual source, compiled
+  Runner and compiled server-vendor readers passed strict manifest/profile/
+  closure/binary checks, while the Mac daemon remained unchanged. This proves
+  the scoped controller asset recovery, not a complete four-platform release.
+- After those assets were restored, a real Kimi turn requested native Read for
+  the bootstrap file. Its canonical request had no proven file target and was
+  never approved. The lifecycle case timed out and failed session recovery;
+  the original failed/cleanup-failed verdict is retained. All observed owned
+  sandboxes and temporary credentials were separately retired and verified.
+- A bounded real pinned-native control established that approve-reads delegates
+  these provider requests; it does not automatically approve native Read.
+  The proposed replacement uses server-owned get_task_context, whose empty-input
+  schema and active-task authority are independently checked, with one explicit
+  fixture-human approval after observer baseline and continuation publication.
+  Unknown native Read is still unapproved and unqualified. Native Write must
+  remain genuinely pending before Stop/loss. Synthetic proof rows alone do not
+  establish delivery: production boundary calibration identified semantic input
+  in the durable checkpoint and a delivered result command, rather than a
+  semantic result event in the public run log. The checkpoint observer and full
+  fresh runtime acceptance remain gates before using this replacement.
+- The master merge preserved sealed private-handoff custody ahead of ordinary
+  report-root configuration, including after dotenv. Actual private/public
+  launch regressions passed 57 tests and a wrong-root mutation failed all four
+  relevant cases. A missing upstream tar-stream lock importer was repaired by
+  the canonical pinned package manager: exactly thirteen added lines, with no
+  unrelated resolution churn. Frozen installation and Runner TypeScript build
+  passed. Combined harness checks passed 325 tests with one existing skip, plus
+  137 Node tests and six Rust notification controls with one existing opt-in
+  ignore. Full repository checks and current-head review remain release gates.
+- All ten fresh local9 report packages remain outside the checkout, and the
+  explicitly approved 14.8 MB private backup was verified by full checksum,
+  byte count and encryption read-back. Future raw payloads have no implied
+  upload authorization from that one archive approval.
 
 Material local attempts remain distinct:
 
@@ -336,8 +400,9 @@ private build. It was restored before canonical public-package staging. The
 accepted database process/version must be disclosed with each affected result;
 no database fixture contract or tracked dependency file was changed.
 
-Campaign cost: subscription model calls have no reliable native usage counters;
-cost is unknown. One cloud job was stopped during pre-build; no image or Daytona sandbox exists. Original
+Early campaign cost record: subscription model calls have no reliable native
+usage counters; cost is unknown. At that point one cloud job was stopped before
+building and no image or Daytona sandbox had been created. Original
 403s, the grading defect, credential-boundary failures, and database setup failure
 remain separate failed or blocked attempts; none are overwritten by retries.
 
