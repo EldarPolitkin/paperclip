@@ -747,7 +747,7 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
               id="project-environment"
               aria-label="Project environment"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              disabled={(!onUpdate && !onFieldUpdate) || environments === undefined}
+              disabled={(!onUpdate && !onFieldUpdate) || (environments === undefined && !environmentsError)}
               value={executionWorkspaceEnvironmentId}
               onChange={(event) => commitField("execution_workspace_environment", {
                 executionWorkspacePolicy: {

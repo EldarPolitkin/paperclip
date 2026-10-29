@@ -90,3 +90,8 @@ public fixtures and the PR description.
   were red first. The focused set passes 84 cases, with the 21 route cases rerun
   using a 60-second cold-import budget after a busy-host timeout. Full typecheck,
   build and token/map checks pass.
+
+- A final failure-state regression proves a saved environment can be cleared
+  after its list request fails. Loading still disables selection; a failed read
+  allows inheritance and shows the list error. All 11 component cases, UI
+  typecheck/build and token gates pass after reproducing the blocked clear.

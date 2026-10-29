@@ -2,13 +2,14 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Environment, Project, ProjectCodebase } from "@paperclipai/shared";
-import type { ReactNode } from "react";
+import { act as reactAct, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectProperties } from "./ProjectProperties";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryKeys } from "../lib/queryKeys";
+import { environmentsApi } from "../api/environments";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,6 +73,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.mocked(environmentsApi.list).mockReset().mockResolvedValue([]);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -85,7 +87,7 @@ afterEach(() => {
 
 /** Pass `null` for `experimentalSettings` to render with the policy unresolved. */
 function render(project: Project, experimentalSettings: Record<string, unknown> | null, environments: Environment[] | null = [], onFieldUpdate = vi.fn()) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   if (experimentalSettings) {
     client.setQueryData(queryKeys.instance.experimentalSettings, experimentalSettings);
   }
@@ -99,6 +101,7 @@ function render(project: Project, experimentalSettings: Record<string, unknown> 
       </QueryClientProvider>,
     );
   });
+  return client;
 }
 
 function buttonLabels() {
@@ -232,5 +235,24 @@ describe("ProjectProperties project environment", () => {
     expect(select?.disabled).toBe(true);
     expect(container.textContent).not.toContain("Unavailable environment");
     expect(container.textContent).not.toContain("Choose an available environment");
+  });
+
+  it("allows clearing a saved selection when the environments request fails", async () => {
+    vi.mocked(environmentsApi.list).mockRejectedValue(new Error("Environment list unavailable"));
+    const project = makeProject(makeCodebase());
+    project.executionWorkspacePolicy = { enabled: false, environmentId: coding.id };
+    const save = vi.fn();
+    await reactAct(async () => {
+      const client = render(project, { enableEnvironments: true }, null, save);
+      await client.fetchQuery({ queryKey: queryKeys.environments.list("company-1") }).catch(() => undefined);
+      // React Query batches subscriber notification on the next task.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Project environment"]')!;
+    expect(container.textContent).toContain("Failed to load environments.");
+    expect(select.value).toBe(coding.id);
+    expect(select.disabled).toBe(false);
+    act(() => { select.value = ""; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(save).toHaveBeenCalledWith("execution_workspace_environment", { executionWorkspacePolicy: { enabled: false, environmentId: null } });
   });
 });
