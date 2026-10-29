@@ -45,20 +45,64 @@ const request=http.get({host:'127.0.0.1',port,path:'/api/health',agent},res=>{co
 request.setTimeout(5000,()=>request.destroy());request.on('error',()=>{process.exitCode=1;if(keep)process.disconnect();});
 if(keep){const timer=setTimeout(()=>{agent.destroy();process.disconnect();},5000);process.on('message',m=>{if(m?.kind==='close'){clearTimeout(timer);agent.destroy();process.disconnect();}});}
 `;
+interface ProviderChild {
+  pid?: number; connected?: boolean; exitCode: number | null; signalCode: string | null;
+  send(value: { kind: "close" }): unknown;
+  kill(signal: "SIGTERM" | "SIGKILL"): unknown;
+  once(event: "close" | "error", listener: () => void): unknown;
+}
+/** Exact direct ChildProcess ownership, independent of optional scalar capture.
+ * Serialized into the fixture provider; pure tests inject only events/timers. */
+function providerChildren(io: { schedule(cb: () => void, ms: number): unknown; cancel(timer: unknown): void; empty(): void; unknown(): void }) {
+  const children = new Set<ProviderChild>(), timers: unknown[] = []; let closing = false, emptied = false;
+  const completed = () => {
+    if (!closing || children.size || emptied) return;
+    emptied = true; for (const timer of timers) io.cancel(timer); io.empty();
+  };
+  const signal = (value: "SIGTERM" | "SIGKILL") => {
+    for (const child of children) if (child.exitCode === null && child.signalCode === null) { try { child.kill(value); } catch { /* No close receipt: remain unknown. */ } }
+  };
+  return {
+    track(child: ProviderChild) {
+      if (closing) throw new Error("Provider cannot admit another client while draining");
+      children.add(child);
+      child.once("close", () => { children.delete(child); completed(); });
+      child.once("error", () => { /* Error is not evidence that an owned process closed. */ });
+    },
+    drain() {
+      if (closing) return;
+      closing = true;
+      if (!children.size) { completed(); return; }
+      timers.push(io.schedule(() => signal("SIGTERM"), 500), io.schedule(() => signal("SIGKILL"), 1000),
+        io.schedule(() => { if (children.size) io.unknown(); }, 1500));
+      for (const child of children) {
+        try { if (child.connected) child.send({ kind: "close" }); else if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM"); }
+        catch { /* Phased exact-handle signals follow; only close proves drain. */ }
+      }
+    },
+  };
+}
+function registerProviderClient(child: ProviderChild, owner: { track(child: ProviderChild): void }, identify: (pid: number | undefined) => unknown, emit: (value: unknown) => void) {
+  owner.track(child);
+  try { emit({ kind: "client", identity: identify(child.pid) }); }
+  catch { emit({ kind: "client-identity-unavailable" }); }
+}
 function providerProgram(observerUrl: string) { return `import {spawn} from 'node:child_process';
 import {readFileSync,readlinkSync} from 'node:fs';
 import {processScalar} from ${JSON.stringify(observerUrl)};
-const children=new Map();const client=process.argv[2],hz=Number(process.argv[3]);
+const client=process.argv[2],hz=Number(process.argv[3]);let closing=false;
+const lifecycle=(${providerChildren.toString()} )({schedule:(cb,ms)=>setTimeout(cb,ms),cancel:t=>clearTimeout(t),
+empty:()=>{if(process.connected)process.send({kind:'children-empty'},()=>process.disconnect());},
+unknown:()=>{if(process.connected)process.send({kind:'children-drain-unknown'});}});
 function scalar(pid){return processScalar(pid,readFileSync('/proc/'+pid+'/stat','utf8'),readFileSync('/proc/'+pid+'/status','utf8'),readFileSync('/proc/stat','utf8'),hz,readlinkSync('/proc/'+pid+'/ns/net'));}
-function finish(){if(children.size===0&&closing)process.disconnect();}let closing=false;
-process.on('message',m=>{if(m?.kind==='close'){closing=true;for(const c of children.keys()){if(c.connected)c.send({kind:'close'});}finish();return;}
- if(m?.kind!=='request'||!['node','curl','keepalive'].includes(m.mode)||!Number.isInteger(m.port)||m.port<1||m.port>65535)return;
+process.on('message',m=>{if(m?.kind==='close'){closing=true;lifecycle.drain();return;}
+ if(closing||m?.kind!=='request'||!['node','curl','keepalive'].includes(m.mode)||!Number.isInteger(m.port)||m.port<1||m.port>65535)return;
  const keep=m.mode==='keepalive';
  const c=m.mode==='curl'?spawn('/usr/bin/curl',['--disable','--silent','--output','/dev/null','--max-time','5','--no-keepalive','http://127.0.0.1:'+m.port+'/api/health'],{env:{},stdio:'ignore'}):spawn(process.execPath,[client,String(m.port),keep?'keepalive':'short'],{env:{},stdio:keep?['ignore','ignore','ignore','ipc']:'ignore'});
- let identity;try{identity=scalar(c.pid);children.set(c,identity);process.send({kind:'client',identity});}catch{children.set(c,null);process.send({kind:'client-identity-unavailable'});}
+ (${registerProviderClient.toString()})(c,lifecycle,scalar,m=>process.send(m));
  c.on('message',r=>{if(r?.kind==='received'&&Number.isInteger(r.status))process.send({kind:'received',status:r.status});});
  c.once('error',()=>process.send({kind:'client-error'}));
- c.once('exit',code=>{children.delete(c);process.send({kind:'done',code});finish();});
+ c.once('exit',code=>{if(process.connected)process.send({kind:'done',code});});
 });
 process.send({kind:'ready',pid:process.pid});
 `; }
@@ -93,7 +137,8 @@ async function identity(pid: number, ticks: number) {
 async function message(owned: Owned, kind: string) {
   requireRemote(); const end = Date.now() + 5000;
   while (Date.now() < end) {
-    const index = owned.messages.findIndex(m => rec(m).kind === kind || ["client-error", "client-identity-unavailable"].includes(String(rec(m).kind)));
+    const failures = kind === "children-empty" ? ["children-drain-unknown"] : ["client-error", "client-identity-unavailable"];
+    const index = owned.messages.findIndex(m => rec(m).kind === kind || failures.includes(String(rec(m).kind)));
     if (index >= 0) { const m = rec(owned.messages.splice(index, 1)[0]); if (m.kind !== kind) throw new Error("Actual spawned client prerequisite failed"); return m; }
     if (owned.child.exitCode !== null) throw new Error("Owned process exited before required scalar receipt");
     await delay(5);
@@ -181,16 +226,40 @@ async function stopExact(p: ProcessScalar, ticks: number) {
   for (let i = 0; i < 50; i++) { if (!await stillOwned()) return; await delay(10); }
   throw new Error("Exact owned process cleanup did not close");
 }
+async function confirmProviderDrain(io: { connected(): boolean; request(): void; receipt(): Promise<{ kind?: unknown }>; disconnect(): Promise<void> }) {
+  if (!io.connected()) throw new Error("Provider closed without its children-empty receipt");
+  io.request();
+  if ((await io.receipt()).kind !== "children-empty") throw new Error("Provider child drain is unproved");
+  await io.disconnect();
+  if (io.connected()) throw new Error("Provider did not disconnect after child drain");
+}
+async function providerDisconnected(owned: Owned) {
+  requireRemote(); const end = Date.now() + 1000;
+  while (owned.child.connected && Date.now() < end) await delay(5);
+  if (owned.child.connected) throw new Error("Provider did not disconnect after its children-empty receipt");
+}
 afterEach(async () => {
   if (!eligible) return;
-  let unknownCleanup = false;
+  let unknownCleanup = false; const awaitingDrain = new Set<ChildProcess>();
   for (const f of ownedFixtures.splice(0).reverse()) {
-    for (const p of [...f.providers, f.target]) { try { if (p.child.connected) p.child.send({ kind: "close" }); } catch { /* Exact ownership cleanup follows. */ } }
-    for (const p of [...f.clients, ...f.providers.map(p => p.identity), f.target.identity]) {
+    for (const p of f.providers) {
+      awaitingDrain.add(p.child);
+      try {
+        await confirmProviderDrain({ connected: () => p.child.connected, request: () => { p.child.send({ kind: "close" }); },
+          receipt: () => message(p, "children-empty"), disconnect: () => providerDisconnected(p) });
+        awaitingDrain.delete(p.child);
+      } catch { unknownCleanup = true; }
+    }
+    try { if (f.target.child.connected) f.target.child.send({ kind: "close" }); } catch { /* Exact target cleanup follows. */ }
+    for (const p of [...f.clients, ...f.providers.filter(p => !awaitingDrain.has(p.child)).map(p => p.identity), f.target.identity]) {
       try { await stopExact(p, f.ticks); } catch { unknownCleanup = true; }
     }
   }
-  for (const child of [...directChildren]) { try { await stopHandle(child); } catch { unknownCleanup = true; } }
+  for (const child of [...directChildren]) {
+    // Never kill a provider before it has accounted for every actual child.
+    if (awaitingDrain.has(child)) continue;
+    try { await stopHandle(child); } catch { unknownCleanup = true; }
+  }
   if (unknownCleanup) throw new Error("Owned cleanup remains unknown; private calibration metadata retained");
   for (const root of privateRoots) await rm(root, { recursive: true, force: true });
   privateRoots.clear();
@@ -218,4 +287,45 @@ it("pure fixture programs parse without executing their HTTP/process bodies", ()
   for (const source of [serverProgram, clientProgram, providerProgram("file:///owned/diagnostic-target-observer.ts")]) {
     expect(() => stripTypeScriptTypes(source, { mode: "strip" })).not.toThrow();
   }
+});
+
+function injectedDrain() {
+  const callbacks = new Map<string, () => void>(), scheduled = new Map<number, () => void>(), signals: string[] = [];
+  let empty = 0, unknown = 0;
+  const child: ProviderChild = { connected: false, exitCode: null, signalCode: null,
+    send: () => {}, kill: signal => signals.push(signal), once: (event, cb) => callbacks.set(event, cb) };
+  const owner = providerChildren({ schedule: (cb, ms) => { scheduled.set(ms, cb); return ms; }, cancel: timer => { scheduled.delete(Number(timer)); },
+    empty: () => { empty++; }, unknown: () => { unknown++; } });
+  return { owner, child, callbacks, scheduled, signals, counts: () => ({ empty, unknown }) };
+}
+it("pure drain retains a child whose scalar capture failed until actual close", () => {
+  const f = injectedDrain(), emitted: unknown[] = [];
+  registerProviderClient(f.child, f.owner, () => { throw new Error("withheld identity details"); }, value => emitted.push(value));
+  expect(emitted).toEqual([{ kind: "client-identity-unavailable" }]);
+  f.owner.drain(); expect(f.counts()).toEqual({ empty: 0, unknown: 0 });
+  f.callbacks.get("error")!(); expect(f.counts().empty).toBe(0);
+  f.callbacks.get("close")!(); expect(f.counts()).toEqual({ empty: 1, unknown: 0 }); expect(f.scheduled.size).toBe(0);
+});
+it("pure missing child close reports unknown and never emits children-empty", () => {
+  const f = injectedDrain(); f.owner.track(f.child); f.owner.drain();
+  f.scheduled.get(500)!(); f.scheduled.get(1000)!(); f.scheduled.get(1500)!();
+  expect(f.signals).toEqual(["SIGTERM", "SIGTERM", "SIGKILL"]); expect(f.counts()).toEqual({ empty: 0, unknown: 1 });
+  expect(() => f.owner.track(f.child)).toThrow();
+});
+it("pure drain requires every child close and admits no duplicate close command", () => {
+  const f = injectedDrain(), second = injectedDrain(); f.owner.track(f.child); f.owner.track(second.child);
+  f.owner.drain(); f.owner.drain(); f.callbacks.get("close")!(); expect(f.counts().empty).toBe(0);
+  second.callbacks.get("close")!(); expect(f.counts().empty).toBe(1);
+});
+
+it("pure parent drain gate cannot admit termination on missing/unknown receipt or missing disconnect", async () => {
+  for (const kind of [undefined, "children-drain-unknown"]) {
+    let admitted = false, disconnects = 0;
+    await expect(confirmProviderDrain({ connected: () => true, request: () => {}, receipt: async () => ({ kind }), disconnect: async () => { disconnects++; } }).then(() => { admitted = true; })).rejects.toThrow();
+    expect(admitted).toBe(false); expect(disconnects).toBe(0);
+  }
+  await expect(confirmProviderDrain({ connected: () => true, request: () => {}, receipt: async () => ({ kind: "children-empty" }), disconnect: async () => {} })).rejects.toThrow();
+  let connected = true, requests = 0;
+  await confirmProviderDrain({ connected: () => connected, request: () => { requests++; }, receipt: async () => ({ kind: "children-empty" }), disconnect: async () => { connected = false; } });
+  expect(requests).toBe(1);
 });
