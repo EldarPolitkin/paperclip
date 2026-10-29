@@ -1181,13 +1181,22 @@ export const cursorCloudFollowupTask: RunnerTaskFixture = {
   buildTitle: nonce => `Cursor Cloud follow-up ${nonce}`,
 };
 
+const cursorCloudPlanningBase = runnerTasks.find(task => task.id === "plan-revise-accept")!;
+export const cursorCloudPlanningTask: RunnerTaskFixture = {
+  ...cursorCloudPlanningBase, automaticRetryPolicy: "single_attempt",
+  buildPrompt: nonce => cursorCloudPlanningBase.buildPrompt(nonce).replace(
+    "For a native runner, remain in the requested planning collaboration mode.",
+    "For a native runner, follow the requested Paperclip planning authority. Cursor Cloud uses its default harness for this semantic Plan workflow; do not request Cursor native Plan mode.",
+  ),
+};
+
 export const runnerSuites: readonly RunnerSuiteFixture[] = [
   {
     id: CURSOR_CLOUD_SUITE, label: "Native Cursor Cloud", manualOnly: true, groups: [],
-    description: "Local Paperclip controller with hosted Cursor work: verified artifact, same-agent follow-up and real active-run Stop.",
+    description: "Local Paperclip controller with hosted Cursor work: verified artifact, same-agent follow-up, real active-run Stop and semantic plan revision/approval.",
     profiles: [cursorCloudProfile], environments: runnerEnvironments.filter(environment => environment.id === "local"),
-    tasks: [cursorCloudArtifactTask, cursorCloudFollowupTask, cursorCloudStopTask], expectedMatrixSize: 3,
-    definitionMetadata: { version: 1, definitionDigest: cursorCloudDefinitionDigest(), scheduling: "explicit-only", maximumAttemptsPerCell: 1,
+    tasks: [cursorCloudArtifactTask, cursorCloudFollowupTask, cursorCloudStopTask, cursorCloudPlanningTask], expectedMatrixSize: 4,
+    definitionMetadata: { version: 2, definitionDigest: cursorCloudDefinitionDigest(), scheduling: "explicit-only", maximumAttemptsPerCell: 1,
       effectiveModelAcknowledged: false, commandPermissions: "provider-managed", costCoverage: "provider-cost-unavailable",
       quietWindowMs: CURSOR_CLOUD_QUIET_WINDOW_MS, repository: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REPO ?? "",
       repositoryRef: process.env.PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REF ?? "", callbackExposure: "callback-path-only-loopback-proxy" },

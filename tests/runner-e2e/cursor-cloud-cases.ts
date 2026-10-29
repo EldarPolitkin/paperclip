@@ -6,7 +6,7 @@ export const CURSOR_CLOUD_SUITE = "cursor-cloud";
 export const CURSOR_CLOUD_QUIET_WINDOW_MS = 15_000;
 export function cursorCloudDefinitionDigest() {
   const hash = createHash("sha256");
-  for (const file of ["cursor-cloud-cases.ts", "cursor-cloud-observer.ts", "cursor-cloud-stop-flow.ts", "cursor-cloud-stop-observation.ts", "cursor-cloud-callback-proxy.ts", "prerequisites.ts", "cursor-cloud-budget.ts", "live-fixtures.ts", "runner.spec.ts", "registered-artifact.ts"]) hash.update(file).update(readFileSync(new URL(file, import.meta.url)));
+  for (const file of ["catalog.ts", "cursor-cloud-cases.ts", "cursor-cloud-observer.ts", "cursor-cloud-stop-flow.ts", "cursor-cloud-stop-observation.ts", "cursor-cloud-callback-proxy.ts", "prerequisites.ts", "cursor-cloud-budget.ts", "live-fixtures.ts", "runner.spec.ts", "registered-artifact.ts"]) hash.update(file).update(readFileSync(new URL(file, import.meta.url)));
   return hash.digest("hex");
 }
 export const cursorCloudArtifactName = (nonce: string) => `cursor-cloud-${nonce}.txt`;

@@ -1,10 +1,11 @@
 # Paid runner full-stack E2E
 
 The explicit-only `cursor-cloud` suite uses a local controller and hosted Cursor
-Cloud work. Its three required cells check a downloaded registered artifact,
-question/answer continuation on the same Cloud agent, and UI Stop of an
-independently observed active Cloud run. It is experimental and unqualified until
-all three real cells pass. Model acknowledgement and provider dollar cost remain
+Cloud work. Its four required cells check a downloaded registered artifact,
+question/answer continuation on the same Cloud agent, UI Stop of an
+independently observed active Cloud run, and semantic Plan revision/approval.
+It is experimental and unqualified until all four real cells pass.
+Model acknowledgement and provider dollar cost remain
 unavailable; catalog discovery and support tests are not live acceptance.
 
 Configure `PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_MODEL` with an exact account model,
@@ -27,7 +28,12 @@ checked before fixtures or provider work. Never tunnel the local operator app.
 
 Discover with `pnpm test:e2e:runner -- --list --suite cursor-cloud`. The smallest
 paid cell is `pnpm test:e2e:runner -- --id cursor-cloud.runner-cursor-cloud.local.task-artifact`.
-Select `cloud-followup` and `active-run-stop` explicitly for the other two cells.
+Select `cloud-followup`, `active-run-stop`, or `plan-revise-accept` explicitly for
+the other cells. The Plan cell reuses the production planning flow: publish a
+two-step Plan, request and review a three-step revision, then approve that exact
+revision in the browser before completion. Its three expected runs use
+Paperclip planning authority with Cursor's default harness; it does not exercise
+Cursor's native Plan API or native plan-decision callbacks.
 The complete bounded checkpoint is `pnpm test:e2e:runner -- --suite cursor-cloud`.
 Each cell permits one attempt. Missing prerequisites setup-block before provider
 work. Teardown cancels observed active runs and deletes only agents named by

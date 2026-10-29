@@ -18,17 +18,24 @@ function notice(ownerRunId = "local-run") {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Cursor Cloud Product E2E registration", () => {
-  it("registers exactly artifact, follow-up and active Stop as single-attempt explicit local cells", () => {
-    expect(cells.map(cell => cell.task.id)).toEqual(["task-artifact", "cloud-followup", "active-run-stop"]);
+  it("registers artifact, follow-up, active Stop and semantic planning as single-attempt explicit local cells", () => {
+    expect(cells.map(cell => cell.task.id)).toEqual(["task-artifact", "cloud-followup", "active-run-stop", "plan-revise-accept"]);
     for (const cell of cells) {
       expect(cell.requiredCredentials).toEqual(["CURSOR_API_KEY"]);
       expect(cell.environment.id).toBe("local"); expect(cell.task.automaticRetryPolicy).toBe("single_attempt");
       expect(cell.suite.manualOnly).toBe(true);
       expect(selectRunnerExecutions(parseRunnerSelectors(["--id", cell.id])).map(row => row.id)).toEqual([cell.id]);
     }
-    expect(cells.map(cell => cell.task.expectedRunCount)).toEqual([1, 2, 1]);
+    expect(cells.map(cell => cell.task.expectedRunCount)).toEqual([1, 2, 1, 3]);
     expect(selectRunnerExecutions(parseRunnerSelectors(["--all"])).some(cell => cell.suite.id === "cursor-cloud")).toBe(false);
     expect(cells[0]!.task.buildMatchers("nonce", cells[0]!)).toContainEqual({ kind: "artifact_exact", name: "cursor-cloud-nonce.txt", expected: "verified-nonce\n", mimeType: "text/plain" });
+    const plan = cells.find(cell => cell.task.id === "plan-revise-accept")!.task;
+    expect(plan.workMode).toBe("planning");
+    expect(plan.flow).toBe("plan_revision_acceptance");
+    expect(plan.buildPlanMarkers?.("nonce")).toEqual({ draft: "PAPERCLIP_E2E_PLAN_DRAFT_nonce", revised: "PAPERCLIP_E2E_PLAN_REVISED_nonce" });
+    expect(plan.buildRevisionRequest?.("nonce")).toContain("targetRevisionId");
+    expect(plan.buildPrompt("nonce")).toContain("do not request Cursor native Plan mode");
+    expect(plan.buildPrompt("nonce")).not.toContain("remain in the requested planning collaboration mode");
   });
   it("binds the exact explicit model and encrypted Cloud credential without native permission fiction", () => {
     vi.stubEnv("PAPERCLIP_CURSOR_CLOUD_ACCEPTANCE_REPO", "https://github.com/owned/disposable");
