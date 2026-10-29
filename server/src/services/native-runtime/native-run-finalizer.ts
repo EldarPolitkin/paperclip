@@ -144,6 +144,18 @@ function isCommittedAuditOnlyRouting(value: unknown) {
 
 export { projectNativeTerminalRunStatus } from "./native-run-projection.js";
 
+type NativeTextlessWorkObservation = "missing_semantic_result_and_assistant_text";
+
+/** An additive engine observation, not a model-authored work or review claim. */
+function readTextlessOpenCodeObservation(value: unknown): NativeTextlessWorkObservation | null {
+  const terminal = record(value);
+  return terminal.schema === "paperclip.prp.terminal.v1" && terminal.provider === "opencode" &&
+    terminal.workOutcomeReason === "missing_semantic_result_and_assistant_text" &&
+    terminal.turnTerminalState === "completed" && terminal.runTerminalState === "succeeded" &&
+    terminal.reportedWorkDisposition === "needs_review"
+    ? "missing_semantic_result_and_assistant_text" : null;
+}
+
 type NativeTerminalContext = {
   run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId" | "agentId" | "runtimeMode" |
     "nativeIssueId" | "nativeSessionId" | "completionContractId" | "completionContractSha256" | "runnerProfileJson">;
@@ -155,7 +167,7 @@ export function resolveNativeFinalizerStatus(
   input: Parameters<typeof arbitrateNativeStatus>[0] & { nativeTerminal?: NativeTerminalContext },
 ) {
   const run = input.nativeTerminal?.run;
-  const terminal = record(input.nativeTerminal?.terminal);
+  const observation = readTextlessOpenCodeObservation(input.nativeTerminal?.terminal);
   let execution: ReturnType<typeof parseNativeExecutionInput> | null = null;
   try { execution = parseNativeExecutionInput(record(run?.runnerProfileJson).nativeExecutionInput); }
   catch { /* Invalid or historical execution input cannot authorize this observation. */ }
@@ -169,10 +181,7 @@ export function resolveNativeFinalizerStatus(
     binding.issueId === run.nativeIssueId && typeof run.nativeSessionId === "string" &&
     session.normalizedSessionId === run.nativeSessionId && typeof run.completionContractId === "string" &&
     contract.id === run.completionContractId && contract.sha256 === run.completionContractSha256 &&
-    terminal.schema === "paperclip.prp.terminal.v1" && terminal.provider === "opencode" &&
-    terminal.workOutcomeReason === "missing_semantic_result_and_assistant_text" &&
-    terminal.turnTerminalState === "completed" && terminal.runTerminalState === "succeeded" &&
-    terminal.reportedWorkDisposition === "needs_review" && input.terminalState === "succeeded" &&
+    observation !== null && input.terminalState === "succeeded" &&
     assessment.reportedDisposition === "needs_review" && assessment.contractRevisionMatches &&
     !assessment.objectiveClaimSatisfied && !assessment.objectiveSatisfied && !assessment.allCriteriaSatisfied &&
     assessment.hasBlockingRemainingWork && assessment.acceptedEvidenceRefs.length === 0 &&

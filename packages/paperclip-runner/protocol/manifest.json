@@ -135,7 +135,7 @@
     {
       "path": "schemas/terminal.schema.json",
       "id": "https://paperclip.dev/schemas/prp/v1/terminal.schema.json",
-      "sha256": "d090f3ea22256d7a659ce0ca32013513a9e0051fcef85358f7c8e353876029ed"
+      "sha256": "e9093399ac6422e77b060269910ffaba9a3d574ed578832821e310a0582edffd"
     },
     {
       "path": "schemas/usage.schema.json",

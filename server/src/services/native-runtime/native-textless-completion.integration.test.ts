@@ -71,6 +71,8 @@ describe("textless OpenCode durable finalization", () => {
     const fixture = await seed(status);
     const before = (await db.select().from(issues).where(eq(issues.id, fixture.issueId)))[0]!;
     const accepted = (await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, fixture.runId)))[0]!;
+    expect(accepted.resultJson).toMatchObject({ terminal: { provider: "opencode",
+      workOutcomeReason: "missing_semantic_result_and_assistant_text" } });
     const wakesBefore = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
     expect(await finalizeNativeRun({ db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true }))
       .toMatchObject({ phase: "terminal_failure" });

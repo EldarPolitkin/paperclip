@@ -63,7 +63,8 @@ criteria and no invented agent-message evidence. The transport outcome remains
 successful. The summary states that task completion is unverified; it does not
 invent a reviewer, approval, retry, or another executor. Existing task and review
 ownership remain authoritative. The native producer records the closed
-`missing_semantic_result_and_assistant_text` observation. After checking the
+`missing_semantic_result_and_assistant_text` observation in the existing additive
+terminal contract. This is an engine observation, not a universal schema enum. After checking the
 native OpenCode execution binding, terminal and assessment, the server preserves
 task state and records a terminal finalization problem with a manual recovery
 action. It does not schedule another executor or automatic finalization retry.
