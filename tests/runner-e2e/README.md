@@ -3110,7 +3110,10 @@ journals and their holds are not rewritten by changing future campaign policy.
 
 `runs-adapters.validate-hire` keeps its original Morgan query, one controller
 work admission, one human message and 600-second attempt. Its selected OpenRouter
-input uses `targetRef: fixture.environment` and `accountBindingRef: OPENROUTER_API_KEY`.
+input is only the declared `OPENROUTER_API_KEY` selected credential. The target
+is the actual owned `fixtures.environment`; no external-provider configuration
+is required. The selected native OpenCode/1017 profile and local environment
+are independently checked before creating the new target connection.
 A new, genuinely validated target app connection has its own encrypted slot;
 only that slot receives an invalid disposable value. The controller's fixed
 connection and the real provider key remain unchanged. Morgan is a real public

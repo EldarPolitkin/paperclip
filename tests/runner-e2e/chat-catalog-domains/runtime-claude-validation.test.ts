@@ -2,6 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { actualAuthenticationFailure, savedValidationReceipts, savedValidationDigests, validationDigest, validationOperation, validationFailureReplyMatches, gradeClaudeValidation, runtimeClaudeValidationCases, validationTargetSetupMatches } from "./runtime-claude-validation.js";
 import type { Agent } from "../../../packages/shared/src/types/agent.js";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { stageChatPrivateInputs, chatPrivateInputNameIdentity, chatPrivateSetupBlockers, readChatPrivateInputs, CHAT_PRIVATE_INPUTS_ENV } from "../chat-private-inputs.js";
 const companyId = "company", issueId = "issue", leadId = "ceo", runId = "run";
 const worker = { id: "morgan", companyId, name: "Morgan", reportsTo: leadId, status: "paused", lifecycleState: "paused", pauseReason: "setup", lifecycleHolds: ["setup"], adapterType: "paperclip_runner", adapterConfig: { provider: "opencode", model: "openrouter/deepseek/deepseek-v4.1-flash-1017", timeoutSec: 0 }, defaultEnvironmentId: "target", runtimeConfig: { aiConnection: { provider: "openrouter", method: "api_key", mode: "delegated", connectionId: "account", grantId: "grant" } } } as unknown as Agent;
 const expected = { companyId, issueId, leadId, runId, worker };
@@ -45,13 +49,13 @@ it("rejects setup hello, target work, controller substitution, false readiness a
  for(const key of ["actualAccountEligible","noTargetWorkBeforeQuery","targetVisibleToController","targetAuthTransition","sameAccountIdentities","controllerBindingUnchanged","noEmployeeRuns"] as const){const o=valid();o.state[key]=false;expect(gradeClaudeValidation(o).passed).toBe(false);}
  const o=valid();o.state.canonicalValidationReceipts.push(o.state.canonicalValidationReceipts[0]!);expect(gradeClaudeValidation(o).passed).toBe(false);expect(gradeClaudeValidation(undefined).passed).toBe(false);
 });
-function setupMock(change?: { slotOwner?: string; controllerMode?: string; targetStatus?: string; setupState?: string }) {
+function setupMock(change?: { slotOwner?: string; controllerMode?: string; targetStatus?: string; setupState?: string; environmentId?: string; environmentDriver?: string; profileId?: string; model?: string; credentialName?: string; missingCredential?: boolean; noPrivateSink?: boolean }) {
  const calls:string[]=[], privateSecrets:string[]=[];const target=structuredClone(worker);if(change?.setupState)target.lifecycleState=change.setupState as Agent["lifecycleState"];target.runtimeConfig.aiConnection={...worker.runtimeConfig.aiConnection,grantId:"fresh-grant",connectionId:"fresh-account"} as typeof worker.runtimeConfig.aiConnection;
  const lead={...worker,id:leadId,lifecycleState:"ready",runtimeConfig:{aiConnection:{provider:"openrouter",method:"api_key",mode:change?.controllerMode??"delegated",connectionId:"controller-account",grantId:"controller-grant"}}};
  const account={id:"fresh-account",grantId:"fresh-grant",provider:"openrouter",status:change?.targetStatus??"connected",ownership:"personal",ownerUserId:"owner"};
- const api={baseURL:"http://fixture.invalid",async get(path:string){calls.push(`GET ${path}`);if(path===`/api/environments/target`)return{id:"target",driver:"local",status:"active"};if(path===`/api/agents/${leadId}`)return lead;if(path===`/api/agents/${target.id}`)return target;if(path.endsWith('/ai-connections'))return{connections:[account]};if(path.endsWith('/me/user-secrets'))return[{definition:{id:"def",key:"ai_fresh_grant",companyId},secret:{id:"target-slot",scope:"user",companyId,ownerUserId:change?.slotOwner??"owner",userSecretDefinitionId:"def",status:"active"}}];throw new Error("unexpected public read");},async post(path:string,body:unknown){calls.push(`POST ${path}`);expect(path).toBe(`/api/companies/${companyId}/agents`);expect((body as {setupId?:string}).setupId).toBeTruthy();Object.assign(target,body,{id:(body as {setupId:string}).setupId});return target;},async postSensitive(path:string,body:unknown){calls.push(`POST_SENSITIVE ${path}`);if(path.endsWith('/ai-connections')){expect(body).not.toHaveProperty('connectionId');expect(body).toMatchObject({allAgents:false,agentIds:[],apiKey:"synthetic-qa-key"});return{connectionId:"fresh-account",grantId:"fresh-grant"};}if(path.endsWith('/rotate')){expect(path).toContain('/target-slot/');expect((body as {value:string}).value).toMatch(/^eval-invalid-/);return{};}if(path.endsWith('/keys'))return{id:"probe-key",token:"synthetic-agent-token"};throw new Error("unexpected sensitive request");},async getRunObservation(path:string){calls.push(`GET_RUN ${path}`);return[];}};
+ const api={baseURL:"http://fixture.invalid",async get(path:string){calls.push(`GET ${path}`);if(path===`/api/environments/target`)return{id:change?.environmentId??"target",driver:change?.environmentDriver??"local",status:"active"};if(path===`/api/agents/${leadId}`)return lead;if(path===`/api/agents/${target.id}`)return target;if(path.endsWith('/ai-connections'))return{connections:[account]};if(path.endsWith('/me/user-secrets'))return[{definition:{id:"def",key:"ai_fresh_grant",companyId},secret:{id:"target-slot",scope:"user",companyId,ownerUserId:change?.slotOwner??"owner",userSecretDefinitionId:"def",status:"active"}}];throw new Error("unexpected public read");},async post(path:string,body:unknown){calls.push(`POST ${path}`);expect(path).toBe(`/api/companies/${companyId}/agents`);expect((body as {setupId?:string}).setupId).toBeTruthy();Object.assign(target,body,{id:(body as {setupId:string}).setupId});return target;},async postSensitive(path:string,body:unknown){calls.push(`POST_SENSITIVE ${path}`);if(path.endsWith('/ai-connections')){expect(body).not.toHaveProperty('connectionId');expect(body).toMatchObject({allAgents:false,agentIds:[],apiKey:"synthetic-qa-key"});return{connectionId:"fresh-account",grantId:"fresh-grant"};}if(path.endsWith('/rotate')){expect(path).toContain('/target-slot/');expect((body as {value:string}).value).toMatch(/^eval-invalid-/);return{};}if(path.endsWith('/keys'))return{id:"probe-key",token:"synthetic-agent-token"};throw new Error("unexpected sensitive request");},async getRunObservation(path:string){calls.push(`GET_RUN ${path}`);return[];}};
  vi.stubGlobal('fetch',vi.fn(async()=>new Response(null,{status:200})));
- const ctx={scenario:{id:"runs-adapters.validate-hire"},input:{api,fixtures:{company:{id:companyId},agent:{id:leadId},environment:{id:"target"}},privateSecrets,workspacePath:"/owned/workspace",privateInputs:{configuration:()=>({schemaVersion:1,providers:{openrouter:{disposable:true,resourceIds:["target"],prerequisites:{targetRef:"fixture.environment",accountBindingRef:"OPENROUTER_API_KEY"}}}}),credentials:{OPENROUTER_API_KEY:"synthetic-qa-key"},read:()=>undefined}},allRuns:async()=>[]} as unknown as ChatCatalogContext;
+ const ctx={scenario:{id:"runs-adapters.validate-hire"},input:{execution:{profile:{id:change?.profileId??"runner-opencode",credential:change?.credentialName??"OPENROUTER_API_KEY",model:change?.model??"openrouter/deepseek/deepseek-v4.1-flash-1017"},environment:{id:"local"}},api,fixtures:{company:{id:companyId},agent:{id:leadId},environment:{id:"target"}},privateSecrets:change?.noPrivateSink?undefined:privateSecrets,workspacePath:"/owned/workspace",privateInputs:{configuration:()=>undefined,credentials:change?.missingCredential?{}:{OPENROUTER_API_KEY:"synthetic-qa-key"},read:()=>undefined}},allRuns:async()=>[]} as unknown as ChatCatalogContext;
  return{ctx,calls,privateSecrets};
 }
 it("actual setup callback uses validated separate app slot and genuine setup hold without target probe/work", async()=>{
@@ -64,7 +68,7 @@ it("keeps the selected lazy declaration coherent and other private runtime rows 
  const {chatCatalogCases,loadChatCatalogImplementation}=await import('../chat-catalog-registry.js');
  const row=chatCatalogCases.find(r=>r.scenarioId==='runs-adapters.validate-hire')!;
  expect(await loadChatCatalogImplementation(row)).toBe(runtimeClaudeValidationCases[0]);
- expect(row.requiredCredentials).toEqual(['OPENROUTER_API_KEY']);expect(row.externalInput).toEqual({provider:'openrouter',fields:['targetRef','accountBindingRef']});expect(row.attemptTimeoutMs).toBe(600000);expect(row.turnTimeoutMs).toBe(120000);expect(row.expectedRunCount).toBe(1);
+ expect(row.requiredCredentials).toEqual(['OPENROUTER_API_KEY']);expect(row.externalInput).toBeUndefined();expect(row.attemptTimeoutMs).toBe(600000);expect(row.turnTimeoutMs).toBe(120000);expect(row.expectedRunCount).toBe(1);
  const {runtimePrivateRequirements}=await import('../chat-runtime-private-requirements.js');
  expect(runtimePrivateRequirements['agents.hire-claude-code'].credentials).toEqual(['ANTHROPIC_API_KEY']);expect(runtimePrivateRequirements['runs-adapters.upgrade-runner'].provider).toBe('claude');
 });
@@ -73,4 +77,25 @@ it("checks real target identity/config/native clock and rejects a Codex-only mar
  const x={id:worker.id,companyId,leadId,environmentId:worker.defaultEnvironmentId!,binding:worker.runtimeConfig.aiConnection};expect(validationTargetSetupMatches(worker,x)).toBe(true);
  for(const change of [{id:"foreign"},{companyId:"foreign"},{reportsTo:"foreign"},{defaultEnvironmentId:"foreign"},{adapterConfig:{...worker.adapterConfig,timeoutSec:120}},{adapterConfig:{...worker.adapterConfig,model:"other"}}])expect(validationTargetSetupMatches({...worker,...change} as Agent,x)).toBe(false);
  expect(actualAuthenticationFailure(["adapter_auth_missing"])).toBe(false);
+});
+
+it("rejects missing declared input, wrong protected profile or foreign local target before mutation",async()=>{
+ for(const change of [{missingCredential:true},{noPrivateSink:true},{profileId:"runner-codex"},{model:"other"},{credentialName:"ANTHROPIC_API_KEY"},{environmentId:"foreign"},{environmentDriver:"daytona"}]) {
+  const f=setupMock(change);await expect(runtimeClaudeValidationCases[0]!.setup(f.ctx)).rejects.toThrow();
+  expect(f.calls.some(c=>c.startsWith("POST"))).toBe(false);expect(f.privateSecrets).toEqual([]);
+ }
+});
+
+it("actual selected credential envelope needs no external configuration and registers the private root",async()=>{
+ const {chatCatalogCases}=await import('../chat-catalog-registry.js'), {runnerMatrix}=await import('../catalog.js');
+ const d=chatCatalogCases.find(r=>r.scenarioId==='runs-adapters.validate-hire')!,e=runnerMatrix.find(r=>r.id==='chat-features.runner-opencode.local.runs-adapters.validate-hire')!;
+ const root=mkdtempSync(path.join(tmpdir(),"validate-input-control-"));
+ try {
+  const secrets:string[]=[], staged=stageChatPrivateInputs({execution:e,descriptor:d,privateDir:root,env:{OPENROUTER_API_KEY:"synthetic-declared-key"},secrets});
+  const env={[CHAT_PRIVATE_INPUTS_ENV]:staged.filename,PAPERCLIP_RUNNER_E2E_TEMP_ROOT:root},inputs=readChatPrivateInputs(e.id,secrets,env);
+  expect(chatPrivateSetupBlockers(inputs,d)).toEqual([]);expect(inputs.configuration("external-provider")).toBeUndefined();
+  expect(inputs.credentials.OPENROUTER_API_KEY).toBe("synthetic-declared-key");expect(secrets).toContain("synthetic-declared-key");
+  expect(chatPrivateInputNameIdentity(e.id,env)).toEqual({credentialNames:["OPENROUTER_API_KEY"],referenceNames:[],externalRequirements:[]});
+  const raw=JSON.parse(readFileSync(staged.filename,"utf8"));expect(raw).not.toHaveProperty("external");
+ } finally {rmSync(root,{recursive:true,force:true});}
 });

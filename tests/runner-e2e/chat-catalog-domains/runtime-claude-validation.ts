@@ -5,7 +5,6 @@ import type { AiConnectionList } from "../../../packages/shared/src/ai-connectio
 import { waitForReply, probeAgentPermission } from "./identity-support.js";
 import { checks } from "./internal-support.js";
 import { runtimeDefinition, runtimeObservation, observeRuntime } from "./runtime-support.js";
-import { selectedRuntimeInputs, runtimePrivateSpec } from "./runtime-private.js";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -94,12 +93,15 @@ async function targetRuns(ctx: ChatCatalogContext, workerId: string) {
   return runs.filter(r => r.agentId === workerId).length;
 }
 export const runtimeClaudeValidationCases = [runtimeDefinition("runs-adapters.validate-hire", async ctx => {
-  const selected = selectedRuntimeInputs(ctx, "runs-adapters.validate-hire"), { api, fixtures, privateSecrets } = ctx.input;
+  const { api, fixtures, privateSecrets, privateInputs, execution } = ctx.input;
+  const credential = privateInputs?.credentials.OPENROUTER_API_KEY;
+  if (ctx.scenario.id !== "runs-adapters.validate-hire" || execution.profile.id !== "runner-opencode"
+    || execution.profile.credential !== "OPENROUTER_API_KEY" || execution.profile.model !== model || execution.environment.id !== "local"
+    || !credential?.trim() || !privateSecrets) throw new Error("Validation requires the exact selected native profile and declared private credential sink");
   const companyId = fixtures.company.id, environmentId = fixtures.environment.id;
-  if (selected.values.targetRef !== "fixture.environment" || selected.values.accountBindingRef !== "OPENROUTER_API_KEY" || !privateSecrets) throw new Error("Validation requires the exact owned native target and private input sink");
   const [environment, lead] = await Promise.all([api.get<{ id: string; driver: string; status: string }>(`/api/environments/${environmentId}`), api.get<Agent>(`/api/agents/${fixtures.agent.id}`)]);
-  if (!selected.resourceIds.some(id => id === environmentId || id === "fixture.environment") || environment.id !== environmentId || environment.driver !== "local" || environment.status !== "active" || lead.adapterType !== "paperclip_runner" || lead.adapterConfig.provider !== "opencode" || lead.adapterConfig.model !== model || lead.adapterConfig.timeoutSec !== 0 || lead.lifecycleState !== "ready" || lead.runtimeConfig.aiConnection?.mode !== "delegated" || lead.runtimeConfig.aiConnection.provider !== "openrouter") throw new Error("Validation requires the real native OpenCode controller and owned local environment");
-  const credential = selected.credentials.OPENROUTER_API_KEY!, invalid = `eval-invalid-${randomUUID()}`;
+  if (environment.id !== environmentId || environment.driver !== "local" || environment.status !== "active" || lead.adapterType !== "paperclip_runner" || lead.adapterConfig.provider !== "opencode" || lead.adapterConfig.model !== model || lead.adapterConfig.timeoutSec !== 0 || lead.lifecycleState !== "ready" || lead.runtimeConfig.aiConnection?.mode !== "delegated" || lead.runtimeConfig.aiConnection.provider !== "openrouter") throw new Error("Validation requires the real native OpenCode controller and owned local environment");
+  const invalid = `eval-invalid-${randomUUID()}`;
   privateSecrets.push(credential, invalid);
   // New connection, no connectionId: provider key stays unchanged; only a fresh app slot is later rotated.
   const account = await api.postSensitive<{ connectionId: string; grantId: string }>(`/api/companies/${companyId}/ai-connections`, {
@@ -125,7 +127,7 @@ export const runtimeClaudeValidationCases = [runtimeDefinition("runs-adapters.va
     actualAccountEligible: true, noTargetWorkBeforeQuery: true, targetVisibleToController: true,
     providerProbes: [{ phase: "setup-target-account-key-verification", operation: "create-ai-connection", publicProbeCount: 1, usage: "unavailable", cost: "unavailable" }] };
 }, gradeClaudeValidation, {
-  ...runtimePrivateSpec("runs-adapters.validate-hire"), authentication: "human-session", expectedRunCount: 1, attemptTimeoutMs: 600000,
+  requiredCredentials: ["OPENROUTER_API_KEY"], authentication: "human-session", expectedRunCount: 1, attemptTimeoutMs: 600000,
   setupPolicy: { readiness: "preserve-scenario", invariantCheckIds: ["saved-eligible-target-unstarted-on-setup-hold"] },
   async verifySetup(ctx, s) {
     const before = s.worker as Agent, actual = await ctx.input.api.get<Agent>(`/api/agents/${before.id}`), lead = await ctx.input.api.get<Agent>(`/api/agents/${ctx.input.fixtures.agent.id}`);

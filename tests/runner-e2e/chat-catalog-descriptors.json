@@ -4777,13 +4777,6 @@
     "requiredCredentials": [
       "OPENROUTER_API_KEY"
     ],
-    "externalInput": {
-      "provider": "openrouter",
-      "fields": [
-        "targetRef",
-        "accountBindingRef"
-      ]
-    },
     "scenarioId": "runs-adapters.validate-hire",
     "sourceFiles": [
       "chat-catalog-domains/runtime-claude-validation.ts",
