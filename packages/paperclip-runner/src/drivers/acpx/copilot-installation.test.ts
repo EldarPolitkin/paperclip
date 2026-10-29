@@ -89,12 +89,25 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(82);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(83);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:e0eddf258e824bb0cd7e0ec0a12dc5b8eeff72262e176249b5e6e7d5ea977caf");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:4cecc2ba4bc9674fbc6f585d81934789a98b75a36f074dfe2b40391ae9ef8a19");
   });
 
-  it("preserves published profile 81 while admitting combined profile 82", async () => {
+  it("retains profile 82 while binding Kimi revision history in profile 83", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v82-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("0e0efd23d89c1fbfdb8b621ea17caac2c3ab0f3784f3283a4dfea686de58c4f9");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v83-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "profileCompatibilitySourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 82)).toBe(true);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+      agentProfileVersion: 82, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
+  });
+
+  it("preserves published profile 81 while admitting combined profile 83", async () => {
     const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v81-identity.json", import.meta.url));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe("8b9d6b0e7ba3bb34141275f1a62701c3b69e1e917260d3c9984fbaeba6d413b1");
     const prior = JSON.parse(bytes.toString("utf8"));

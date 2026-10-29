@@ -766,6 +766,17 @@ Rollback by setting the marker to `0` and restarting. No schema changes are
 required. This mechanism does not sleep claimed workspaces or replace a durable
 scheduler for their background work.
 
+## Native finalization history and idle sleep
+
+Idle sleep retains committed native finalization records as audit history.
+A record permits sleep only after its owned run, accepted result, assessment,
+applied status decision, and effect deliveries agree on completion. Leases,
+retries, recovery requests, unfinished accounting, and incomplete run projections
+keep the instance awake. Historical controller identity alone does not block sleep.
+The exact run also needs its successful workspace-finalization receipt. Pending
+final-reply recovery shares its discovery predicate with the recovery worker, and
+live warm sessions remain local work through close/checkpoint completion.
+
 ## Feedback history and idle sleep
 
 Automatic idle checks treat private, unshared feedback as saved data. A sent

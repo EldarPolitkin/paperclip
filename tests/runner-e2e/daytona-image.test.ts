@@ -85,6 +85,43 @@ describe("runner E2E Daytona image contract", () => {
     }
   });
 
+  it("binds each Antigravity input consumed by the merged provider entrypoint builder", async () => {
+    const required = [
+      "packages/paperclip-runner/antigravity-distributions.json",
+      "packages/paperclip-runner/scripts/provision-antigravity.mjs",
+      "packages/paperclip-runner/scripts/antigravity-provisioner-layout.mjs",
+      "packages/paperclip-runner/scripts/materialize-antigravity-distribution.mjs",
+      "packages/paperclip-runner/scripts/patch-antigravity-runtime.mjs",
+      "packages/paperclip-runner/scripts/patch-antigravity-runtime.admission.py",
+    ];
+    const root = await mkdtemp(path.join(tmpdir(), "paperclip-daytona-builder-inputs-"));
+    const options = {
+      repositoryRoot: root,
+      inputPaths: DAYTONA_IMAGE_INPUT_PATHS.filter(input => required.includes(input)),
+      baseImages: [`example.test/base:1@sha256:${"a".repeat(64)}`],
+      frontendDigest: `sha256:${"c".repeat(64)}`,
+    } as const;
+    try {
+      for (const input of required) {
+        expect(DAYTONA_IMAGE_INPUT_PATHS).toContain(input);
+        await mkdir(path.dirname(path.join(root, input)), { recursive: true });
+        await writeFile(path.join(root, input), await readFile(path.join(repositoryRoot, input)));
+      }
+      const baseline = await computeDaytonaImageContentId(options);
+      for (const input of required) {
+        const original = await readFile(path.join(root, input));
+        await writeFile(path.join(root, input), Buffer.concat([original, Buffer.from("\nchanged-build-input\n")]));
+        expect(await computeDaytonaImageContentId(options)).not.toBe(baseline);
+        await rm(path.join(root, input));
+        await expect(computeDaytonaImageContentId(options)).rejects.toThrow();
+        await writeFile(path.join(root, input), original);
+        expect(await computeDaytonaImageContentId(options)).toBe(baseline);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the qualified native Grok binary separate from the legacy command", async () => {
     const [dockerfile, packBuilder, runnerPackage] = await Promise.all([
       readFile(path.join(repositoryRoot, "docker/daytona-runner/Dockerfile"), "utf8"),

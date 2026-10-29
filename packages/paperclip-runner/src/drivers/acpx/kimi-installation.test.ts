@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +26,18 @@ describe("Kimi installed runtime admission", () => {
     for (const alteration of [{ agentServerVersion: "latest" }, { agentServerPackage: "foreign" }, { commandDigest: `sha256:${"f".repeat(64)}` }, { agentProfileVersion: profile.agentProfileVersion + 1 }]) {
       expect(() => assertKimiInstallationProfile({ ...profile, ...alteration })).toThrow(/trusted declaration/);
     }
+  });
+
+  it("retains pending profile 10 while binding the merged entrypoint builder in profile 11", () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/kimi-profile-v10-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("b859f4aefcc36fc5e75b3aeeb02135ca9f7acc84866c856a3939effdd13cb358");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/kimi-profile-v11-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration.sources).filter(key => current.declaration.sources[key] !== prior.declaration.sources[key])).toEqual([
+      "scripts/build-verified-provider-entrypoints.mjs",
+    ]);
+    expect(() => assertKimiInstallationProfile({ ...QUALIFIED_ACPX_PROFILES.kimi,
+      agentProfileVersion: 10, commandDigest: prior.commandDigest })).toThrow(/trusted declaration/);
   });
 
   it("gives the normal setup command and never falls back to ambient kimi when assets are missing", async () => {
