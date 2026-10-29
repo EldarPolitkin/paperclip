@@ -274,6 +274,40 @@ describePostgres("heartbeat recovery module ownership", () => {
     } finally { try { await f.cleanup(); } finally { await child.stop(); } }
   });
 
+  it.each(["unknown", "remote"] as const)("exposes expired observed %s ownership without attributing host liveness", async target => {
+    const child = await ownedProcess();
+    const f = await nativeProcessFixture(child.pid, "remote", "running");
+    const originalKill = process.kill.bind(process);
+    let restoreKill: (() => void) | undefined;
+    try {
+      if (target === "unknown") await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.run.id));
+      await db.update(heartbeatRuns).set({ nativePhase: null })
+        .where(eq(heartbeatRuns.id, f.run.id));
+      await db.update(nativeRunFinalizations).set({ phase: "observed", attempt: 2,
+        leaseOwner: "prior-native-owner", leaseExpiresAt: new Date(0), nextAttemptAt: null })
+        .where(eq(nativeRunFinalizations.runId, f.run.id));
+      const before = await f.current();
+      const coordinatorBefore = await db.select().from(nativeRunFinalizations)
+        .where(eq(nativeRunFinalizations.runId, f.run.id));
+      const kill = vi.spyOn(process, "kill").mockImplementation(originalKill);
+      restoreKill = () => kill.mockRestore();
+      expect(await createHeartbeatRecovery(db, f.deps).reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
+      expect(kill.mock.calls.filter(([pid]) => Math.abs(pid as number) === child.pid)).toEqual([]);
+      expect(await f.current()).toMatchObject({ status: "running", nativePhase: null,
+        processPid: child.pid, processGroupId: child.pid, processStartedAt: before.processStartedAt,
+        errorCode: NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE });
+      expect(f.deps.appendRunEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        payload: { reason: "observed_owner_unverified" },
+      }));
+      expect(await db.select().from(nativeRunFinalizations)
+        .where(eq(nativeRunFinalizations.runId, f.run.id))).toEqual(coordinatorBefore);
+      expect(f.deps.executeRun).not.toHaveBeenCalled();
+      expect(f.deps.terminateHeartbeatRunProcess).not.toHaveBeenCalled();
+      kill.mockRestore(); restoreKill = undefined;
+      expect(child.alive()).toBe(true);
+    } finally { restoreKill?.(); try { await f.cleanup(); } finally { await child.stop(); } }
+  });
+
   it.each(["failed", "running"] as const)("protects a verified local %s run's live process", async status => {
     const child = await ownedProcess();
     const f = await nativeProcessFixture(child.pid, "local", status);

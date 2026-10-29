@@ -2360,7 +2360,6 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       ) {
         continue;
       }
-      if (nativeRun && !locallyTracked && (run.processPid || run.processGroupId) && !nativeLocalProcess) continue;
       const observedOwnerUnverified =
         nativeRun &&
         (nativeCoordinatorPhase === "observed" ||
@@ -2391,6 +2390,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         });
         continue;
       }
+      if (nativeRun && !locallyTracked && (run.processPid || run.processGroupId) && !nativeLocalProcess) continue;
       if (resumedRunIds.has(run.id)) continue;
       if (locallyTracked) continue;
       if (await hasLiveLegacyController(db, run)) continue;
