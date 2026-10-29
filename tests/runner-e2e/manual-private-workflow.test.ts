@@ -10,9 +10,10 @@ import { MAX_MANUAL_PRIVATE_CELLS, MANUAL_PRIVATE_EXECUTIONS } from "./manual-pr
 const source=await readFile(new URL("../../.github/workflows/runner-full-stack-e2e.yml",import.meta.url),"utf8");
 const jobs=YAML.parse(source).jobs;
 const step=(job:string,name:string)=>jobs[job].steps.find((row:{name?:string})=>row.name===name);
-function condition(expression:string, state:any){
+function condition(expression:string, state:any, previousStatus:"success"|"failure"|"cancelled"="success"){
  const value=expression.replace(/^\$\{\{\s*|\s*\}\}$/g, "");
- return Function("always","needs","steps","matrix","secrets","env",`return (${value})`)(()=>true,state.needs,state.steps,state.matrix,state.secrets,state.env);
+ const gated=/\b(?:always|cancelled|failure|success)\s*\(/.test(value)?value:`success() && (${value})`;
+ return Function("always","success","failure","cancelled","needs","steps","matrix","secrets","env",`return (${gated})`)(()=>true,()=>previousStatus==="success",()=>previousStatus==="failure",()=>previousStatus==="cancelled",state.needs,state.steps,state.matrix,state.secrets,state.env);
 }
 it("never uploads staged manual cell or merged evidence to public Actions on private failure",()=>{
  const state={needs:{catalog:{outputs:{operations_cadence:""}},authorize:{outputs:{evidence_retention:"private"}}},steps:{manual_cell_route:{outputs:{route:"private"}},manual_private_verified:{outcome:"failure"}}};
@@ -148,6 +149,13 @@ it("keeps Claude preparation before keys and cleans private config before any ev
  expect(condition(prepare.if,secondaryClaudeState())).toBe(true);expect(condition(prepare.if,secondaryClaudeState(chooseClaude))).toBe(false);
  const failed=secondaryClaudeState();failed.env={PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT:"owned-private-root"};
  expect(condition(cleanup.if,failed)).toBe(true);
+});
+
+it.each(["failure","cancelled"] as const)("actual Claude input cleanup survives %s and rejects missing always",status=>{
+ const state=secondaryClaudeState();state.env={PAPERCLIP_CLAUDE_FEATURE_INPUT_ROOT:"synthetic-owned-root"};
+ const cleanup=step("test_manual_private","Remove selected Claude hiring input files");
+ expect(condition(cleanup.if,state,status)).toBe(true);
+ expect(condition(cleanup.if.replace(/\balways\(\)\s*&&\s*/,""),state,status)).toBe(false);
 });
 
 it("the actual installer metadata producer binds canonical package bytes without running the CLI",async()=>{
