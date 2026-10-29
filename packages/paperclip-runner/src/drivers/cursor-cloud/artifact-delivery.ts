@@ -1,8 +1,86 @@
-import { constants } from "node:fs";
-import { link, lstat, mkdir, open, unlink } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { link, lstat, mkdir, open, opendir, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CursorCloudClient } from "./cloud-client.js";
 import { createHash, randomUUID } from "node:crypto";
+
+const artifactPublisherNonce = randomUUID();
+const activeArtifactAliases = new Set<string>();
+const retainedOwnArtifactAliases = new Map<string, { dev: number; ino: number }>();
+const uuidPattern = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+const artifactAliasPattern = new RegExp(`^\\.cursor-cloud-([a-f0-9]{64})-([1-9][0-9]*)-(${uuidPattern})-(${uuidPattern})\\.tmp$`);
+const sameArtifactIdentity = (a: { dev: number; ino: number }, b: { dev: number; ino: number }) => a.dev === b.dev && a.ino === b.ino;
+const privateArtifact = (stat: Stats) => stat.isFile() && (stat.mode & 0o077) === 0 && (!process.getuid || stat.uid === process.getuid());
+
+function artifactPublisherIsDead(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+
+async function verifyPublishedArtifact(target: string, bytes: Buffer, sha256: string): Promise<Stats> {
+  const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const before = await handle.stat(); const pathBefore = await lstat(target);
+    if (!privateArtifact(before) || before.size !== bytes.length || !privateArtifact(pathBefore) || !sameArtifactIdentity(before, pathBefore)
+      || createHash("sha256").update(await handle.readFile()).digest("hex") !== sha256) throw new Error("Cursor Cloud artifact staging identity conflict");
+    const after = await handle.stat(); const pathAfter = await lstat(target);
+    if (!privateArtifact(after) || after.size !== bytes.length || !privateArtifact(pathAfter) || !sameArtifactIdentity(before, after)
+      || !sameArtifactIdentity(after, pathAfter)) throw new Error("Cursor Cloud artifact staging identity conflict");
+    return after;
+  } finally { await handle.close(); }
+}
+
+async function recoverPublishedArtifactAliases(input: {
+  directory: string; target: string; filenameDigest: string; bytes: Buffer; sha256: string; signal: AbortSignal;
+}): Promise<Stats> {
+  input.signal.throwIfAborted();
+  const final = await verifyPublishedArtifact(input.target, input.bytes, input.sha256);
+  if (final.nlink > 1) {
+    const names: string[] = [];
+    for await (const entry of await opendir(input.directory)) {
+      input.signal.throwIfAborted();
+      if (names.length === 256) throw new Error("Cursor Cloud artifact publication recovery exceeds its directory bound");
+      names.push(entry.name);
+    }
+    const aliases = names.map(name => ({ name, match: artifactAliasPattern.exec(name) }))
+      .filter(value => value.match?.[1] === input.filenameDigest);
+    if (aliases.length > 32) throw new Error("Cursor Cloud artifact publication recovery exceeds its alias bound");
+    for (const { name, match } of aliases) {
+      input.signal.throwIfAborted();
+      const alias = join(input.directory, name); const pid = Number(match![2]);
+      const own = retainedOwnArtifactAliases.get(alias);
+      const finishedOwn = pid === process.pid && match![3] === artifactPublisherNonce && own !== undefined;
+      if (activeArtifactAliases.has(alias) || (!finishedOwn && !artifactPublisherIsDead(pid))) continue;
+      const handle = await open(alias, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(error => {
+        if (["ENOENT", "ELOOP"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+        throw error;
+      });
+      if (!handle) continue;
+      try {
+        const held = await handle.stat(); const current = await lstat(alias).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
+        if (!current || !privateArtifact(held) || !privateArtifact(current) || held.size !== input.bytes.length
+          || !sameArtifactIdentity(held, final) || !sameArtifactIdentity(held, current) || (finishedOwn && !sameArtifactIdentity(held, own!))) continue;
+        input.signal.throwIfAborted();
+        const target = await lstat(input.target); const aliasBefore = await lstat(alias).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
+        if (!aliasBefore) continue;
+        if (!privateArtifact(target) || !sameArtifactIdentity(target, final) || !privateArtifact(aliasBefore)
+          || !sameArtifactIdentity(aliasBefore, held)) throw new Error("Cursor Cloud artifact publication ownership changed");
+        await unlink(alias).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+        if (finishedOwn) retainedOwnArtifactAliases.delete(alias);
+      } finally { await handle.close(); }
+    }
+  }
+  const verified = await verifyPublishedArtifact(input.target, input.bytes, input.sha256);
+  if (!sameArtifactIdentity(final, verified) || verified.nlink !== 1) throw new Error("Cursor Cloud artifact has unresolved publication aliases");
+  return verified;
+}
 
 export async function stageCursorCloudArtifact(input: {
   arguments: unknown;
@@ -34,11 +112,14 @@ export async function stageCursorCloudArtifact(input: {
   }
   const contentRef = join(args.sha256, args.filename);
   const target = join(directory, args.filename);
-  const temporary = join(directory, `.cursor-cloud-${randomUUID()}.tmp`);
+  const filenameDigest = createHash("sha256").update(args.filename).digest("hex");
+  const temporary = join(directory, `.cursor-cloud-${filenameDigest}-${process.pid}-${artifactPublisherNonce}-${randomUUID()}.tmp`);
   input.signal.throwIfAborted();
   const handle = await open(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  activeArtifactAliases.add(temporary);
   try {
     const held = await handle.stat();
+    let published = false;
     try {
       await handle.writeFile(bytes); await handle.sync();
       const current = await lstat(temporary);
@@ -46,26 +127,33 @@ export async function stageCursorCloudArtifact(input: {
         || (current.mode & 0o077) !== 0 || (process.getuid && current.uid !== process.getuid())) throw new Error("Cursor Cloud artifact temporary ownership changed");
       input.signal.throwIfAborted();
       // A hard link publishes complete bytes without overwriting a concurrent final.
-      try { await link(temporary, target); }
+      try { await link(temporary, target); published = true; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-        try {
-          const stat = await existing.stat();
-          if (!stat.isFile() || stat.size !== bytes.length || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())
-            || createHash("sha256").update(await existing.readFile()).digest("hex") !== args.sha256) throw new Error("Cursor Cloud artifact staging identity conflict");
-        } finally { await existing.close(); }
+        await verifyPublishedArtifact(target, bytes, args.sha256);
       }
     } finally {
       const current = await lstat(temporary);
       if (!current.isFile() || current.isSymbolicLink() || current.dev !== held.dev || current.ino !== held.ino) throw new Error("Cursor Cloud artifact temporary ownership changed");
-      await unlink(temporary);
+      await unlink(temporary).catch(async error => {
+        const retained = await lstat(temporary).catch(() => null);
+        if (published && retained && privateArtifact(retained) && sameArtifactIdentity(retained, held) && retained.nlink > 1) {
+          retainedOwnArtifactAliases.set(temporary, { dev: held.dev, ino: held.ino });
+        }
+        throw error;
+      });
     }
-  } finally { await handle.close(); }
+  } finally {
+    try { await handle.close(); } finally { activeArtifactAliases.delete(temporary); }
+  }
+  const published = await recoverPublishedArtifactAliases({ directory, target, filenameDigest, bytes, sha256: args.sha256, signal: input.signal });
   // EEXIST retries also finish durability after a prior post-publication failure.
   for (const root of [directory, input.artifactRoot, input.runtimeDirectory]) {
     const handle = await open(root, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
     try { await handle.sync(); } finally { await handle.close(); }
   }
+  input.signal.throwIfAborted();
+  const verified = await verifyPublishedArtifact(target, bytes, args.sha256);
+  if (!sameArtifactIdentity(published, verified) || verified.nlink !== 1) throw new Error("Cursor Cloud artifact publication ownership changed");
   return { ...args, contentRef };
 }

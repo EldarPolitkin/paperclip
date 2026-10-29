@@ -251,8 +251,11 @@ byte count and SHA-256. Runner downloads the provider artifact to its private
 artifact root before normal deliverable registration. Fully verified bytes publish
 atomically without replacing an existing final file; existing files must match the
 claim. A crashed writer can leave an unreferenced private temporary file, which is
-retained rather than mistaken for a completed artifact. A remote path never grants
-access to the controller's project files.
+retained rather than mistaken for a completed artifact. A completed publication
+alias is removed only for a proven inactive publisher and the exact verified
+private final inode. Active or unknown aliases remain fenced; successful handoff
+requires a single final link. A remote path never grants access to the controller's
+project files.
 
 Google Antigravity is an **unqualified, pending** native ACPX integration. The
 explicit `paperclipai runtime setup antigravity` command installs the verified
