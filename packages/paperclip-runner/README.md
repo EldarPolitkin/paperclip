@@ -230,6 +230,10 @@ Cloud v1 provides no independent acknowledgment of the effective model or exact
 instruction digest. Runner records submitted inputs and treats this support as
 experimental. Cursor manages its own shell permissions; native permission,
 question and plan callbacks and fixed per-run dollar limits are unavailable.
+Paperclip planning tasks retain their pinned planning context and existing tool
+restrictions while using Cloud's default harness. Plan documents and
+revision-bound Paperclip confirmations use the normal semantic tools; this does
+not enable Cursor's native Plan API or native plan-decision callbacks.
 Production usage and dollar cost remain unknown; the Cloud usage API is not yet
 projected through the Runner facade. Stop cancels the exact Cloud run and requires
 a terminal provider receipt. Unknown cancellation remains unconfirmed. Recovery

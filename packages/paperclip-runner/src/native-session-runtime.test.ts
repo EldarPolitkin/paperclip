@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { resolveQualifiedAcpxProfile } from "./drivers/acpx/qualified-profiles.js";
 import { describe, expect, it, vi } from "vitest";
-import { createCodexNativeSessionBackend } from "./backends/codex-native-backend.js";
+import { createCodexNativeSessionBackend, createRunnerdNativeSessionBackend } from "./backends/codex-native-backend.js";
 import { FakeCodexTransport, WORKSPACE } from "./drivers/codex/codex-app-server-driver.test-support.js";
 
 import type { ControlPlanePort } from "./contracts/control-plane-port.js";
@@ -228,6 +230,56 @@ function highestContiguous(events: PrpEvent[]): number {
 }
 
 describe("executeNativeSession recovery", () => {
+  it("completes Cursor Cloud semantic planning through its default-only harness without losing the pinned revision", async () => {
+    await writeFile(join(WORKSPACE, "cloud-plan-instructions.md"), "Make the plan only. Do not implement it.\n");
+    const prepared = preparedInput();
+    const context = { ...prepared.runtimeContext, instructions: { ...prepared.runtimeContext.instructions,
+      entryPath: "cloud-plan-instructions.md", bundle: { ...prepared.runtimeContext.instructions.bundle, rootPath: WORKSPACE } } };
+    const planningContext = { documentId: "plan-document", baseRevisionId: "plan-revision-3", baseRevisionNumber: 3,
+      markdown: "# Existing canonical plan", sha256: createHash("sha256").update("# Existing canonical plan").digest("hex"), reviewContext: { feedback: "Keep the requested scope" } };
+    const executionInput: NativeExecutionInputV5 = {
+      ...prepared, executionMode: "plan", planningContext,
+      task: { ...prepared.task, workMode: "planning" },
+      runtimeContext: { ...context, aggregateDigest: canonicalNativeRuntimeContextDigest(context) },
+      workspace: { ...input.workspace, cwd: WORKSPACE },
+      session: { ...input.session, driverKind: "cursor_cloud_api", lifecyclePolicy: { mode: "per_turn", idleTimeoutMs: null } },
+      provider: { kind: "cursor_cloud", model: "explicit-cloud-model", cursorCloud: { schema: "paperclip.cursor-cloud.config.v1", repos: [{ url: "https://github.com/example/fixture" }] } },
+    };
+    const planResult: PrpStructuredRunResult = { ...result, summary: "The requested plan is ready.", artifacts: [{ kind: "native_provider_plan", ref: "<proposed_plan>Keep the requested scope.</proposed_plan>" }] };
+    const transport = new FakeCodexTransport();
+    transport.confirmCollaborationMode = false;
+    const backend = createRunnerdNativeSessionBackend(executionInput, { runnerInstanceId: "runner-recovery", transportFactory: () => transport });
+    const committed: PrpEvent[] = [];
+    const completeRun = vi.fn(async () => undefined);
+    const port: ControlPlanePort = {
+      async openRun() {}, async checkpointSession() {},
+      async appendEvent(event) { committed.push(structuredClone(event)); return { cursor: event.sourceSeq, highestContiguousSourceSeq: event.sourceSeq, disposition: "committed" }; },
+      async replayEvents(query) { const events = committed.filter(event => event.sourceInstanceId === query.sourceInstanceId); return { events: events.filter(event => event.sourceSeq > query.afterSourceSeq).slice(0, query.limit), highestContiguousSourceSeq: highestContiguous(events) }; },
+      completeRun,
+    };
+    const abort = new AbortController();
+    const completion = executeNativeSession({ input: executionInput, backend, controlPlane: port,
+      runnerInstanceId: "runner-recovery", controlPlaneInstanceId: "control-recovery", signal: abort.signal });
+    let failure: unknown;
+    void completion.catch(error => { failure = error; });
+    try {
+      await vi.waitFor(() => expect(transport.calls.some(call => call.method === "turn/start") || failure).toBeTruthy());
+      if (failure) await completion;
+      const started = transport.calls.find(call => call.method === "turn/start")!;
+      const envelope = JSON.parse((started.params.input as Array<{ text: string }>)[0]!.text);
+      expect(envelope).toMatchObject({ executionMode: "plan", task: { workMode: "planning" }, planningContext });
+      expect(transport.calls.find(call => call.method === "thread/start")?.params.baseInstructions).toContain("Make the plan only. Do not implement it.");
+      expect(started.params).not.toHaveProperty("collaborationMode");
+      transport.push("turn/started", { threadId: "thread-1", turn: { id: "turn-1", status: "inProgress" } });
+      transport.push("paperclip/runResult", { threadId: "thread-1", turnId: "turn-1", result: planResult });
+      transport.push("turn/completed", { threadId: "thread-1", turn: { id: "turn-1", status: "completed", items: [] } });
+      await expect(completion).resolves.toMatchObject({ result: planResult, terminal: { runTerminalState: "succeeded" } });
+      expect(completeRun).toHaveBeenCalledOnce();
+      expect(committed.some(event => event.eventType === "run.result.accepted")).toBe(true);
+      expect(executionInput.planningContext).toEqual(planningContext);
+    } finally { abort.abort(); await completion.catch(() => undefined); }
+  });
+
   it.each([false, true].flatMap(recovered => [
     { recovered, cwd: "/home/agent" },
     { recovered, cwd: "/projects/repository/worktrees/task" },

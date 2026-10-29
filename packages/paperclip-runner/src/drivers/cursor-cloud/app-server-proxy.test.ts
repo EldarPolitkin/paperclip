@@ -44,7 +44,12 @@ describe("Cursor Cloud bounded stdio proxy", () => {
       expect(opened).toMatchObject({ result: { thread: { id: "session" }, submittedModel: "explicit-model", effectiveModelAcknowledged: false, instructionsAcknowledged: false } });
       expect(opened.result).not.toHaveProperty("model"); expect(opened.result.thread).not.toHaveProperty("model");
       expect(await f.rpc(3, "turn/start", { input: [{ type: "image", url: "https://example.com/image.png" }] })).toHaveProperty("error");
-      expect(await f.rpc(4, "paperclip/shutdown", { threadId: "session", turnId: null })).toMatchObject({ result: { remoteStopped: true, threadId: "session", turnId: null, remoteRunId: null } });
+      for (const [id, override] of [[4, { collaborationMode: { mode: "plan" } }], [5, { reasoningMode: "high" }]] as const) {
+        expect(await f.rpc(id, "turn/start", { ...override, input: [{ type: "text", text: "Create the plan." }] }))
+          .toMatchObject({ error: { message: "Cursor Cloud native plan/reasoning override is unsupported" } });
+      }
+      expect(await f.rpc(6, "collaborationMode/list")).toMatchObject({ result: { data: [{ mode: "default" }] } });
+      expect(await f.rpc(7, "paperclip/shutdown", { threadId: "session", turnId: null })).toMatchObject({ result: { remoteStopped: true, threadId: "session", turnId: null, remoteRunId: null } });
       expect(nativeFetch).not.toHaveBeenCalled();
     } finally { f.input.end(); await f.proxy.done; }
   });
