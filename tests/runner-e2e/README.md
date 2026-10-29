@@ -3115,3 +3115,18 @@ evidence and the actual blue artifact, or the original visible-rejection branch.
 The existing source-built Pi provisioner must supply its verified asset closure
 on the execution host; this fixture does not install it or change workflow delivery.
 Its original run/message limits and 720-second attempt remain unchanged.
+
+The selected steering target consumes the exact reviewed private Pi receipt
+reader and target-source manifest. Launcher selection rejects missing or foreign
+custody before coordinating an attempt. After host/setup preparation it captures
+the complete source fingerprint and rechecks the verified build bundle, Pi assets
+and full 720-second case plus 90-second cleanup reserve before credential/model
+admission. The final pre-Playwright boundary requires that earlier capture,
+revalidates the receipt/artifacts and rechecks the clock immediately before spawn.
+Its typed admission receipt is retained in the existing private standard snapshots.
+
+These are source and artifact gates. They do not qualify an installed Pi runtime,
+create a case result, change the three-work/one-human allowance, or establish
+negotiated live steering or feature usage. The original grade and steering actions
+stay unchanged. Infrastructure delivery remains a separate reviewed source and
+operational deployment dependency; no preparation fingerprint is an E2E PASS.

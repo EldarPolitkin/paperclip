@@ -1,3 +1,6 @@
+import { requireSteeringPiTime } from "./steering-pi-receipt.js";
+import { admitSteeringPiTarget } from "./steering-pi-target-admission.js";
+import { chatCatalogCaseFingerprint, normalizedChatCatalogExecution } from "./chat-catalog-fingerprint.js";
 import { withholdPrivateScreenshots } from "./screenshot-privacy.js";
 import { copyHealthHelloDetail } from "./chat-readiness-detail.js";
 import { copyRetainedSourceSdk } from "./source-sdk-evidence.js";
@@ -628,6 +631,11 @@ async function runAttempt(input: {
       executions,
       repositoryRoot,
     );
+    const steeringAdmission = await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "pre-framework" });
+    if (steeringAdmission) {
+      const snapshots = path.join(privateDir, "cases", execution.task.id, "snapshots"); await mkdir(snapshots, { recursive: true, mode: 0o700 });
+      await writeFile(path.join(snapshots, "steering-pi-admission.json"), `${JSON.stringify(steeringAdmission)}\n`, { mode: 0o600, flag: "wx" });
+    }
     const childEnv: NodeJS.ProcessEnv = {
       ...buildRunnerE2EProcessEnvironment(sourceEnvironment, executions),
       [CHAT_PRIVATE_INPUTS_ENV]: privateInputs?.filename,
@@ -703,6 +711,7 @@ async function runAttempt(input: {
             0,
           ) +
           5 * 60_000;
+    if (steeringAdmission) requireSteeringPiTime(steeringAdmission.receipt.jobDeadlineMs, Date.now());
     const processResult = await runProcess(
       runnerE2EPlaywrightInvocation(repositoryRoot, playwrightArgs),
       childEnv,
@@ -1252,6 +1261,7 @@ async function main() {
   }
   if (process.env.GITHUB_ACTIONS === "true" && executions.some(execution => requiresPrivateManualEvidence(execution.id)) && !manualPrivateHandoff)
     throw new Error("Sensitive GHA evidence requires verified restricted retention before setup");
+  await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "selection" });
 
   if (process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST && executions.some(execution => execution.task.flow === "provider_connection")) throw new Error("Provider connection campaign has no budgeted routing qualification");
   if (executions.some(execution => execution.task.flow === "github_review_journey")) {
@@ -1297,6 +1307,8 @@ async function main() {
     process.env[STOCK_PREFLIGHT_ENV] = prepareStockHarnessPreflight(summaryDir);
   }
 
+  await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "post-setup",
+    fingerprint: () => chatCatalogCaseFingerprint(findChatCatalogCase(executions[0]!.task.id)!, normalizedChatCatalogExecution(executions[0]!)) });
   await loadLocalEnvironment(process.env);
   assertRemoteNativeEvidencePrerequisites(executions, process.env);
   const missingCredentials = process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST ? [] : [
