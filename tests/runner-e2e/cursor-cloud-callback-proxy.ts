@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../../packages/paperclip-runner/src/drivers/runner-tool-bridge.js";
 
 export async function startCursorCloudCallbackProxy(input: { port: number; appPort: number }) {
   if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65535 || input.port === input.appPort) throw new Error("Cursor Cloud requires a distinct callback-only loopback port");
@@ -18,7 +19,7 @@ export async function startCursorCloudCallbackProxy(input: { port: number; appPo
         chunks.push(Buffer.from(chunk));
       }
       const headers: Record<string, string> = { "content-type": "application/json" };
-      for (const key of ["authorization", "mcp-session-id", "mcp-protocol-version"]) {
+      for (const key of ["authorization", "mcp-session-id", "mcp-protocol-version", RUNNER_TOOL_SCOPE_TOKEN_HEADER]) {
         const value = request.headers[key]; if (typeof value === "string") headers[key] = value;
       }
       const upstream = await fetch(`http://127.0.0.1:${input.appPort}${request.url}`, {

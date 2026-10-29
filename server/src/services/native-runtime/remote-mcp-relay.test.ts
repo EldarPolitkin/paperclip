@@ -3,6 +3,7 @@ import { ClientRequest, createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { join } from "node:path";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../../vendor/paperclip-runner/index.js";
 import { createRemoteMcpRelayToken, forwardRemoteMcpRequest, registerRemoteMcpRelay, remoteMcpRelayUrl } from "./remote-mcp-relay.js";
 
 const cleanup: Array<() => void | Promise<void>> = [];
@@ -15,9 +16,12 @@ describe("native remote MCP relay", () => {
     const socketPath = join(root, "mcp.sock");
     const token = createRemoteMcpRelayToken();
     let calls = 0;
+    const scopeAuthorization = `Bearer ${createRemoteMcpRelayToken()}`;
+    const observedScopeHeaders: Array<string | string[] | undefined> = [];
     const server = createServer((req, res) => {
       expect(req.headers.authorization).toBe(`Bearer ${token}`);
       expect(req.url).toBe("/mcp");
+      observedScopeHeaders.push(req.headers[RUNNER_TOOL_SCOPE_TOKEN_HEADER]);
       const chunks: Buffer[] = [];
       req.on("data", chunk => chunks.push(chunk));
       req.on("end", () => { calls++; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(Buffer.concat(chunks).toString()).id, result: { accepted: true } })); });
@@ -28,10 +32,11 @@ describe("native remote MCP relay", () => {
     const release = registerRemoteMcpRelay({ runId: "run", socketPath, token, expiresAt: Date.now() + 60_000, authorized: async () => active });
     cleanup.push(release);
     const body = { jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: "paperclip_finish", arguments: {} } };
-    const invoke = (authorization = `Bearer ${token}`) => forwardRemoteMcpRequest({ runId: "run", authorization, body });
+    const invoke = (authorization = `Bearer ${token}`) => forwardRemoteMcpRequest({ runId: "run", authorization, scopeAuthorization, body });
     expect((await invoke("Bearer forged")).status).toBe(401);
     const response = await invoke();
     expect(response.status).toBe(200);
+    expect(observedScopeHeaders).toEqual([scopeAuthorization]);
     expect(JSON.parse(response.body.toString())).toEqual({ jsonrpc: "2.0", id: 0, result: { accepted: true } });
     active = false;
     expect((await invoke()).status).toBe(403);

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { request } from "node:http";
 import { isAbsolute } from "node:path";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../../vendor/paperclip-runner/index.js";
 
 export interface RemoteMcpRelayBinding {
   runId: string;
@@ -39,6 +40,7 @@ export function remoteMcpRelayUrl(origin: string, runId: string): string {
 export async function forwardRemoteMcpRequest(input: {
   runId: string;
   authorization: string | undefined;
+  scopeAuthorization?: string;
   body: unknown;
   mcpSessionId?: string;
 }): Promise<{ status: number; body: Buffer; mcpSessionId?: string }> {
@@ -57,6 +59,7 @@ export async function forwardRemoteMcpRequest(input: {
       "content-type": "application/json", accept: "application/json", authorization: `Bearer ${binding.token}`,
       "content-length": body.length,
       ...(input.mcpSessionId ? { "mcp-session-id": input.mcpSessionId } : {}),
+      ...(input.scopeAuthorization ? { [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: input.scopeAuthorization } : {}),
     } }, response => {
       const chunks: Buffer[] = [];
       let size = 0;

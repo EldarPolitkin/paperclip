@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { nativeRunMcpRoutes } from "../../server/src/routes/native-run-mcp.js";
 import { createRemoteMcpRelayToken, registerRemoteMcpRelay } from "../../server/src/services/native-runtime/remote-mcp-relay.js";
-import { startRunnerToolBridge } from "../../packages/paperclip-runner/src/drivers/runner-tool-bridge.js";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER, startRunnerToolBridge } from "../../packages/paperclip-runner/src/drivers/runner-tool-bridge.js";
 import { assertCursorCloudCallbackIngress, startCursorCloudCallbackProxy } from "./cursor-cloud-callback-proxy.js";
 
 const require = createRequire(resolve(import.meta.dirname, "../../server/package.json"));
@@ -27,12 +27,14 @@ it("serves the strict MCP SDK through the Cloud callback with isolated sessions 
   const token = createRemoteMcpRelayToken();
   const runId = "00000000-0000-4000-8000-000000000762";
   let active = true, scope: string | null = "turn-one";
+  let scopeToken = createRemoteMcpRelayToken();
   const calls: Array<{ tool: string; callId: string }> = [];
   const task = { taskId: "fixture-task", completionContractRevision: "fixture-revision" };
   const artifacts = { items: [{ path: "fixture.txt", sizeBytes: 12 }] };
   const schema = { type: "object", properties: {}, additionalProperties: false };
   const bridge = await startRunnerToolBridge({ socketPath: join(root, "mcp.sock"), secret: token, preserveToolNames: true,
     sessionScope: () => scope,
+    scopeToken: () => scopeToken,
     tools: [{ name: "get_task_context", inputSchema: schema }, { name: "list_cursor_cloud_artifacts", inputSchema: schema }],
     handler: async call => { calls.push({ tool: call.tool, callId: call.callId }); return call.tool === "get_task_context" ? task : artifacts; },
   });
@@ -47,11 +49,11 @@ it("serves the strict MCP SDK through the Cloud callback with isolated sessions 
   await assertCursorCloudCallbackIngress(origin);
   const requests: Array<{ http: string; rpc: unknown; method?: string; tool?: string; session?: string | null; status: number }> = [];
   const errors: string[] = [];
-  const connect = async () => {
+  const connect = async (suppliedScopeToken = scopeToken) => {
     const client = new Client({ name: "controlled-cloud-qualification", version: "1" });
     client.onerror = (error: unknown) => errors.push(error instanceof Error ? error.message : String(error));
     const transport = new StreamableHTTPClientTransport(new URL(`/mcp/native-runs/${runId}`, origin), {
-      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      requestInit: { headers: { Authorization: `Bearer ${token}`, [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: `Bearer ${suppliedScopeToken}` } },
       fetch: async (url: string | URL | Request, init?: RequestInit) => {
         expect(new URL(url instanceof Request ? url.url : String(url)).origin).toBe(origin);
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
@@ -65,7 +67,7 @@ it("serves the strict MCP SDK through the Cloud callback with isolated sessions 
     await client.connect(transport);
     return { client, transport };
   };
-  const first = await connect();
+  const first = await connect().catch(error => { throw new Error("First scoped MCP initialize returned HTTP " + String(requests.at(-1)?.status), { cause: error }); });
   const tools = await first.client.listTools();
   expect(tools.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["get_task_context", "list_cursor_cloud_artifacts", "paperclip_finish", "paperclip_block"]));
   expect(tools.tools.find((tool: { name: string }) => tool.name === "get_task_context").inputSchema).toEqual(schema);
@@ -87,6 +89,11 @@ it("serves the strict MCP SDK through the Cloud callback with isolated sessions 
   expect(errors).toEqual([]);
   scope = "turn-two";
   await expect(first.client.callTool({ name: "get_task_context", arguments: {} })).rejects.toHaveProperty("code", 404);
+  const oldScopeToken = scopeToken;
+  scopeToken = createRemoteMcpRelayToken();
+  await expect(connect(oldScopeToken)).rejects.toHaveProperty("code", 401);
+  const current = await connect();
+  await expect(current.client.listTools()).resolves.toHaveProperty("tools");
   active = false;
   await expect(second.client.callTool({ name: "get_task_context", arguments: {} })).rejects.toHaveProperty("code", 403);
   binding.expiresAt = Date.now() - 1;
