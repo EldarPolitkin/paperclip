@@ -3094,3 +3094,27 @@ The shared report navigation links the dated, immutable catalog snapshot.
 Deploying this generator does not rewrite existing published history HTML.
 Activating the link on an existing page requires a separately reviewed,
 conditional navigation-only update. The metadata command publishes nothing.
+
+### Selected steering Pi assets
+
+The manual private local OpenCode steering cell prepares its explicit Pi feature
+runtime with the existing source-built `provision-pi.cjs`, after protected private
+preflight and verified campaign output restoration, before model credentials and
+framework fingerprinting. Other selections do not run this stage. The installer
+uses the existing setup environment allowlist, excluding GitHub, AWS and model
+credentials. Its output stays in the private preflight root.
+
+A single own-attempt jobs metadata read binds the actual job start, runner and
+workflow. The 32-minute job cap remains unchanged. Installation cancellation
+reserves child drain and the complete 720-second case plus 90-second cleanup;
+cancellation, unknown retirement or insufficient time never admits the case.
+The target must carry the identical `steering-pi-receipt.ts` reader and consume
+its owned, exact-attempt receipt after fingerprint/setup overhead immediately
+before framework admission, rechecking remaining time and asset identity. That
+target integration is a separate source dependency; copying the reader alone
+does not qualify invocation. The current steering target remains unchanged.
+
+This stage verifies the pinned package closure without inference. Actual Linux
+installation, full runtime fingerprint, negotiated live steering and feature
+model/usage remain remote qualification gates. The CEO remains native OpenCode
+DeepSeek 1017; Pi Sonnet 4.6 is the explicitly selected feature runtime.
