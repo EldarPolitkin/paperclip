@@ -18,8 +18,8 @@ function state() {
 function condition(expression: string, context: ReturnType<typeof state>) {
   return Function("needs", "steps", "matrix", "env", "always", `return (${expression})`)(context.needs, context.steps, context.matrix, context.env, () => true);
 }
-function run(step: { run: string }, marker: string, env: NodeJS.ProcessEnv) {
-  const body = step.run.split(`// BEGIN_${marker}\n`)[1]?.split(`// END_${marker}`)[0];
+function run(step: { run: string }, env: NodeJS.ProcessEnv) {
+  const body = step.run.split("<<'NODE'\n")[1]?.split("\nNODE")[0];
   if (!body) throw new Error("Actual workflow input producer missing");
   return spawnSync(process.execPath, ["--input-type=module", "-e", body], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
 }
@@ -53,14 +53,14 @@ it("selects only the exact private local provision cell after successful private
 it("actual producer writes only the fixed published pin and named key reference in private owned files", async () => {
   const f = await fixture();
   try {
-    const result = run(prepare, "PROVISION_INSTALL_INPUTS", f.env); expect(result.status, result.stderr).toBe(0); expect(result.stdout).toBe("");
+    const result = run(prepare, f.env); expect(result.status, result.stderr).toBe(0); expect(result.stdout).toBe("");
     const values = entries(await readFile(f.githubEnv, "utf8")), directory = values.PAPERCLIP_PROVISION_INPUT_ROOT!, file = values.PAPERCLIP_CHAT_INSTALLED_SOURCE_CONFIG!;
     expect(Object.keys(values).sort()).toEqual(["PAPERCLIP_CHAT_INSTALLED_SOURCE_CONFIG", "PAPERCLIP_PROVISION_INPUT_ROOT"]);
     expect(path.dirname(directory)).toBe(f.root); expect(path.dirname(file)).toBe(directory);
     expect((await stat(directory)).mode & 0o777).toBe(0o700); expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ schemaVersion: 1, disposable: true,
       source: { version: "2026.1023.0", integrity: "sha512-PA2gLYoJKcmen1YaNr7jtyyZK2xNyW92XEedgZ82S1MMeMEB2kdmk1okRMD4aFUV4OZPFBwk76pV0jCM2Fuy0g==" }, piCredentialEnv: "OPENROUTER_API_KEY" });
-    const removed = run(cleanup, "PROVISION_INSTALL_CLEANUP", { ...f.env, ...values }); expect(removed.status, removed.stderr).toBe(0);
+    const removed = run(cleanup, { ...f.env, ...values }); expect(removed.status, removed.stderr).toBe(0);
     await expect(access(directory)).rejects.toMatchObject({ code: "ENOENT" });
     expect(entries(await readFile(f.githubEnv, "utf8"))).toEqual({ PAPERCLIP_PROVISION_INPUT_ROOT: "", PAPERCLIP_CHAT_INSTALLED_SOURCE_CONFIG: "" });
   } finally { await rm(f.root, { recursive: true, force: true }); }
@@ -68,14 +68,14 @@ it("actual producer writes only the fixed published pin and named key reference 
 it("actual producer rejects a foreign selector before creating or handing off inputs", async () => {
   const f = await fixture();
   try {
-    const result = run(prepare, "PROVISION_INSTALL_INPUTS", { ...f.env, SELECTED_EXECUTION_ID: "chat-features.runner-opencode.local.onboarding.new-instance" });
+    const result = run(prepare, { ...f.env, SELECTED_EXECUTION_ID: "chat-features.runner-opencode.local.onboarding.new-instance" });
     expect(result.status).toBe(1); expect(result.stdout).toBe(""); expect(await readdir(f.root)).toEqual(["env"]); expect(await readFile(f.githubEnv, "utf8")).toBe("");
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 it("actual producer removes only its partial staging if environment handoff fails", async () => {
   const f = await fixture();
   try {
-    const result = run(prepare, "PROVISION_INSTALL_INPUTS", { ...f.env, GITHUB_ENV: f.root }); expect(result.status).toBe(1);
+    const result = run(prepare, { ...f.env, GITHUB_ENV: f.root }); expect(result.status).toBe(1);
     expect(await readdir(f.root)).toEqual(["env"]); expect(result.stdout).toBe("");
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
@@ -83,7 +83,7 @@ it("actual cleanup refuses foreign or linked staging without deleting it", async
   const f = await fixture();
   try {
     const foreign = path.join(f.root, "unrelated"), link = path.join(f.root, "paperclip-provision-inputs-link"); await mkdir(foreign); await symlink(foreign, link);
-    for (const root of [foreign, link]) expect(run(cleanup, "PROVISION_INSTALL_CLEANUP", { ...f.env, PAPERCLIP_PROVISION_INPUT_ROOT: root }).status).toBe(1);
+    for (const root of [foreign, link]) expect(run(cleanup, { ...f.env, PAPERCLIP_PROVISION_INPUT_ROOT: root }).status).toBe(1);
     expect((await stat(foreign)).isDirectory()).toBe(true); expect(await readFile(f.githubEnv, "utf8")).toBe("");
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });

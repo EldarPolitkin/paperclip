@@ -1305,7 +1305,6 @@ jobs:
           SELECTED_EXECUTION_ID: ${{ matrix.executionId }}
         run: |
           node --input-type=module <<'NODE'
-          // BEGIN_PROVISION_INSTALL_INPUTS
           import fs from "node:fs";
           import path from "node:path";
           let directory;
@@ -1315,8 +1314,6 @@ jobs:
             if (/[\r\n]/.test(temporary)) throw new Error();
             directory = fs.mkdtempSync(path.join(temporary, "paperclip-provision-inputs-"));
             fs.chmodSync(directory, 0o700);
-            // Published release provenance binds both packages to ff835a3fc62fb50dd1c3cc2ff2246029adeb0d39.
-            // Actual archive, installed tree, process and runtime checks remain in the target.
             const config = { schemaVersion: 1, disposable: true,
               source: { version: "2026.1023.0", integrity: "sha512-PA2gLYoJKcmen1YaNr7jtyyZK2xNyW92XEedgZ82S1MMeMEB2kdmk1okRMD4aFUV4OZPFBwk76pV0jCM2Fuy0g==" },
               piCredentialEnv: "OPENROUTER_API_KEY" };
@@ -1327,7 +1324,6 @@ jobs:
             if (directory) fs.rmSync(directory, { recursive: true, force: true });
             process.stderr.write("Selected published installation input preparation failed; details withheld\n"); process.exitCode = 1;
           }
-          // END_PROVISION_INSTALL_INPUTS
           NODE
 
       - name: Run paid cell
@@ -1360,7 +1356,6 @@ jobs:
         if: always() && env.PAPERCLIP_PROVISION_INPUT_ROOT != ''
         run: |
           node --input-type=module <<'NODE'
-          // BEGIN_PROVISION_INSTALL_CLEANUP
           import fs from "node:fs";
           import path from "node:path";
           try {
@@ -1373,7 +1368,6 @@ jobs:
             fs.rmSync(root, { recursive: true, force: true });
             fs.appendFileSync(process.env.GITHUB_ENV, "PAPERCLIP_PROVISION_INPUT_ROOT=\nPAPERCLIP_CHAT_INSTALLED_SOURCE_CONFIG=\n");
           } catch { process.stderr.write("Selected published installation input cleanup failed; details withheld\n"); process.exitCode = 1; }
-          // END_PROVISION_INSTALL_CLEANUP
           NODE
 
       - name: Stage bounded campaign evidence
