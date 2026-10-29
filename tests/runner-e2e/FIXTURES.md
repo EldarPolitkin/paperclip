@@ -154,6 +154,12 @@ keeps `reuseLease:false` and `runnerLifecycleMode:"per_turn"`. The dedicated
 warm-continuity fixture uses `reuseLease:true` and
 `runnerLifecycleMode:"warm"`; its distinct `configurationKey` is part of the
 suite fingerprint even though both fixtures report `environmentId:"daytona"`.
+Suites may select an `environmentOverrides` entry by task ID and environment
+ID when one case needs a different lifecycle. The matrix, setup payload and
+suite fingerprint use that selected configuration. Kimi's native Write Stop
+and provider-loss cases select the non-reused, per-turn Daytona fixture required
+by their strict observer; its other Daytona cases retain warm reuse. Local Kimi
+fixtures retain the instance-managed environment.
 Keep short provider cleanup backstops, a Daytona secret reference, and an
 immutable image digest. Teardown
 must delete the environment with reusable-lease destruction and must fail the

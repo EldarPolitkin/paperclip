@@ -33,6 +33,24 @@ import {
 } from "./selectors.js";
 
 describe("runner E2E catalog", () => {
+  it("selects non-reused Kimi lifecycle leases without changing its warm or local cases", () => {
+    const suite = runnerSuites.find(row => row.id === "kimi-qualification")!;
+    const cells = runnerMatrix.filter(row => row.suite.id === suite.id);
+    const input = { secretRefs: { DAYTONA_API_KEY: { type: "secret_ref" as const, secretId: "fixture-secret", version: "latest" as const } },
+      daytonaImage: `registry.example.test/runtime@sha256:${"a".repeat(64)}`, executionId: "fixture" };
+    expect(cells).toHaveLength(20);
+    for (const cell of cells) {
+      if (cell.environment.id === "local") {
+        expect(cell.environment).toBe(suite.environments.find(environment => environment.id === "local"));
+        continue;
+      }
+      const lifecycle = cell.task.flow === "kimi_native_lifecycle";
+      expect(cell.environment.buildEnvironment(input).config).toMatchObject({ reuseLease: !lifecycle, runnerLifecycleMode: lifecycle ? "per_turn" : "warm" });
+      expect(cell.groups.includes("warm")).toBe(!lifecycle);
+    }
+    expect(suiteDefinitionHash(suite)).not.toBe(suiteDefinitionHash({ ...suite, environmentOverrides: undefined }));
+  });
+
   it.each([
     ["runner-codex-subscription", "CODEX_AUTH_JSON"], ["runner-codex", "OPENAI_API_KEY"],
   ])("keeps %s receipt smoke separately selectable with exactly four bounded native turns", (profile, credential) => {

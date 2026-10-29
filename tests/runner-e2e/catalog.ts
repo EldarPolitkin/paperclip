@@ -1450,6 +1450,9 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       modelQualification: { source: "candidate_runner_profile", qualificationId: "kimi:2.3.3:authenticated-tool-roundtrip-2026-10-28" },
     })],
     environments: [localEnvironment, daytonaWarmEnvironment],
+    environmentOverrides: Object.fromEntries(kimiLifecycleTasks.map(task => [task.id, {
+      daytona: runnerEnvironments.find(environment => environment.id === "daytona")!,
+    }])),
     tasks: [
       ...runnerTasks, ...localIntegrityTasks, extendedHarnessFileTask,
       ...chatHardeningTasks.filter(task => ["stop-new-resume", "continuity-restart"].includes(task.id)),
@@ -1881,6 +1884,11 @@ export function suiteDefinitionHash(suite: RunnerSuiteFixture) {
           id: environment.id,
           configurationKey: environment.configurationKey ?? "default",
         })),
+        ...(suite.environmentOverrides ? { environmentOverrides: Object.entries(suite.environmentOverrides).map(([taskId, overrides]) => ({
+          taskId, environments: Object.values(overrides).flatMap(environment => environment ? [{
+            id: environment.id, configurationKey: environment.configurationKey ?? "default",
+          }] : []),
+        })) } : {}),
         tasks: suite.tasks.map((task) => ({
           id: task.id,
           flow: task.flow,
@@ -1909,32 +1917,36 @@ export function buildRunnerMatrix(
         )
         .flatMap((environment) =>
           suite.tasks
-            .map((task) => ({
-              id: `${suite.id}.${profile.id}.${environment.id}.${task.id}`,
-              suite,
-              suiteDefinitionHash: suiteDefinitionHash(suite),
-              profile,
-              environment,
-              task: suite.id === "confirmation-replies" && profile.id === "runner-codex" && environment.id === "daytona" && task.id === "task-card-accept"
-                ? { ...task, expectedRunCount: 4, automaticRetryPolicy: "single_attempt" as const }
-                : suite.id === "extended-harnesses" && profile.qualificationCandidate === "pi" && task.id === "file-edit-validate"
-                  ? { ...task, buildPrompt: piFilePrompt }
-                  : suite.id === "extended-harnesses" && profile.qualificationCandidate === "copilot" && task.id === "file-edit-validate"
-                    ? { ...task, buildPrompt: copilotFilePrompt } : task,
-              groups: [
-                ...new Set([
-                  ...suite.groups,
-                  ...profile.groups,
-                  ...environment.groups,
-                  ...task.groups,
-                ]),
-              ],
-              requiredCredentials: [
-                ...(["provider_connection", "github_review_journey"].includes(task.flow) ? [] : [profile.credential]),
-                ...(!["provider_connection", "github_review_journey"].includes(task.flow) && environment.credential ? [environment.credential] : []),
-                ...(task.requiredCredentials ?? []),
-              ],
-            }))
+            .map((task) => {
+              const selectedEnvironment = suite.environmentOverrides?.[task.id]?.[environment.id] ?? environment;
+              if (selectedEnvironment.id !== environment.id) throw new Error(`Fixture environment override changed provider ID for ${suite.id}.${task.id}`);
+              return {
+                id: `${suite.id}.${profile.id}.${environment.id}.${task.id}`,
+                suite,
+                suiteDefinitionHash: suiteDefinitionHash(suite),
+                profile,
+                environment: selectedEnvironment,
+                task: suite.id === "confirmation-replies" && profile.id === "runner-codex" && environment.id === "daytona" && task.id === "task-card-accept"
+                  ? { ...task, expectedRunCount: 4, automaticRetryPolicy: "single_attempt" as const }
+                  : suite.id === "extended-harnesses" && profile.qualificationCandidate === "pi" && task.id === "file-edit-validate"
+                    ? { ...task, buildPrompt: piFilePrompt }
+                    : suite.id === "extended-harnesses" && profile.qualificationCandidate === "copilot" && task.id === "file-edit-validate"
+                      ? { ...task, buildPrompt: copilotFilePrompt } : task,
+                groups: [
+                  ...new Set([
+                    ...suite.groups,
+                    ...profile.groups,
+                    ...selectedEnvironment.groups,
+                    ...task.groups,
+                  ]),
+                ],
+                requiredCredentials: [
+                  ...(["provider_connection", "github_review_journey"].includes(task.flow) ? [] : [profile.credential]),
+                  ...(!["provider_connection", "github_review_journey"].includes(task.flow) && selectedEnvironment.credential ? [selectedEnvironment.credential] : []),
+                  ...(task.requiredCredentials ?? []),
+                ],
+              };
+            })
             .filter((execution) => !excludedExecutionIds.has(execution.id)),
         ),
     );

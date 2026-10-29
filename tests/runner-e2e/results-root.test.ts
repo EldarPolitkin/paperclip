@@ -1,8 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
+import { runnerMatrix } from "./catalog.js";
 import { publishRunnerE2EAttemptEvidence } from "./evidence.js";
 import { prepareRunnerE2ECampaignDirectory, resolveRunnerE2EResultsRoot, RUNNER_E2E_RESULTS_ROOT } from "./results-root.js";
 import type { RunnerE2EResult } from "./types.js";
@@ -126,4 +128,58 @@ it("allows a normal retry in the same physical campaign", async () => {
   expect(await prepareRunnerE2ECampaignDirectory(f.resultsRoot, "unique-campaign")).toBe(path.join(f.resultsRoot, "unique-campaign"));
   await publishRunnerE2EAttemptEvidence({ ...f, result: result("failed"), secrets: [] });
   expect(JSON.parse(await readFile(path.join(f.uploadDir, "result.json"), "utf8"))).toMatchObject({ status: "failed", error: "startup failed" });
+});
+
+async function shadowLauncher(dotenv: string) {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "runner-dotenv-output-")));
+  roots.push(root);
+  const repository = path.join(root, "checkout"), directory = path.join(repository, "tests/runner-e2e");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(repository, "package.json"), '{"type":"module"}');
+  await writeFile(path.join(directory, "launch.ts"), await readFile(path.join(import.meta.dirname, "launch.ts")));
+  for (const entry of await readdir(import.meta.dirname, { withFileTypes: true })) {
+    if (["launch.ts", "results"].includes(entry.name)) continue;
+    await symlink(path.join(import.meta.dirname, entry.name), path.join(directory, entry.name), entry.isDirectory() ? "dir" : "file");
+  }
+  const output = path.join(root, "dotenv-reports"), home = path.join(root, "empty-home");
+  await mkdir(home);
+  await writeFile(path.join(repository, ".env.runner-e2e.local"), dotenv.replaceAll("OUTPUT_ROOT", output));
+  async function launch(args: string[]) {
+    try {
+      return { code: 0, ...await promisify(execFile)(process.execPath,
+        ["--import", path.resolve(import.meta.dirname, "../../cli/node_modules/tsx/dist/loader.mjs"), path.join(directory, "launch.ts"), ...args],
+        { cwd: repository, timeout: 20_000, env: { PATH: process.env.PATH, HOME: home, PAPERCLIP_E2E_CAMPAIGN_ID: "dotenv-probe" } }) };
+    } catch (error) {
+      const result = error as { code: number; stdout: string; stderr: string };
+      return { code: result.code, stdout: result.stdout, stderr: result.stderr };
+    }
+  }
+  return { repository, output, launch };
+}
+
+it("uses the actual dotenv output root before a normal native campaign fails credential admission", async () => {
+  const f = await shadowLauncher("export PAPERCLIP_RUNNER_E2E_RESULTS_ROOT='OUTPUT_ROOT'\n");
+  const result = await f.launch(["--id", "kimi-qualification.runner-acpx-kimi.local.message-marker"]);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("Missing runner E2E credentials: KIMI_API_KEY");
+  expect((await stat(path.join(f.output, "dotenv-probe"))).isDirectory()).toBe(true);
+  await expect(stat(path.join(f.repository, "tests/runner-e2e/results"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each(["list", "pending", "installed-startup"])("does not load dotenv in the %s admission path", async mode => {
+  const f = await shadowLauncher("invalid dotenv assignment\n");
+  const pending = runnerMatrix.find(row => row.profile.id === "legacy-kimi-cli")!;
+  const args = mode === "list" ? ["--list", "--id", "kimi-qualification.runner-acpx-kimi.local.message-marker"]
+    : mode === "pending" ? ["--id", pending.id]
+    : ["--installed-startup-only", "--id", "extended-harnesses.runner-acpx-pi.local.hello-complete", "--max-automatic-retries", "0"];
+  const result = await f.launch(args);
+  expect(result.stderr).not.toContain("Invalid .env.runner-e2e.local");
+  if (mode === "list") {
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("kimi-qualification.runner-acpx-kimi.local.message-marker");
+  } else {
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(mode === "pending" ? "prerequisite(s) are pending" : "Installed startup-only requires");
+  }
+  await expect(stat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
 });

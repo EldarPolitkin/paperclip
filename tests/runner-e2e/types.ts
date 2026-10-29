@@ -209,6 +209,7 @@ export interface RunnerSuiteFixture {
   groups: readonly string[];
   profiles: readonly RunnerProfileFixture[];
   environments: readonly EnvironmentFixture[];
+  environmentOverrides?: Readonly<Record<string, Partial<Record<RunnerEnvironmentId, EnvironmentFixture>>>>;
   tasks: readonly RunnerTaskFixture[];
   excludedExecutionIds?: readonly string[];
   expectedMatrixSize: number;

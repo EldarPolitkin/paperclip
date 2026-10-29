@@ -1067,6 +1067,8 @@ async function main() {
     process.env.PAPERCLIP_E2E_CAMPAIGN_ID ??
       `local-${new Date().toISOString().replace(/[:.]/g, "-")}`,
   );
+  await loadLocalEnvironment(process.env);
+  resultsRoot = resolveRunnerE2EResultsRoot(repositoryRoot);
   const summaryDir = await prepareRunnerE2ECampaignDirectory(resultsRoot, campaignId);
   if (executions.some(execution => execution.suite.id === "native-completion")) {
     process.env[NATIVE_COMPLETION_PREFLIGHT_ENV] = prepareNativeCompletionPreflight(summaryDir);
@@ -1078,7 +1080,6 @@ async function main() {
     process.env[STOCK_PREFLIGHT_ENV] = prepareStockHarnessPreflight(summaryDir);
   }
 
-  await loadLocalEnvironment(process.env);
   assertRemoteNativeEvidencePrerequisites(executions, process.env);
   const missingCredentials = process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST ? [] : [
     ...new Set(
