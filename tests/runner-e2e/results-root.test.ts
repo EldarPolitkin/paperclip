@@ -8,6 +8,8 @@ import { runnerMatrix } from "./catalog.js";
 import { publishRunnerE2EAttemptEvidence } from "./evidence.js";
 import { prepareRunnerE2ECampaignDirectory, resolveRunnerE2EResultsRoot, RUNNER_E2E_RESULTS_ROOT } from "./results-root.js";
 import type { RunnerE2EResult } from "./types.js";
+import { MANUAL_PRIVATE_PROTOCOL } from "./manual-private-retention.js";
+import { inspectCellReportProducer } from "./manual-private-report-assets.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -144,17 +146,17 @@ async function shadowLauncher(dotenv: string) {
   const output = path.join(root, "dotenv-reports"), home = path.join(root, "empty-home");
   await mkdir(home);
   await writeFile(path.join(repository, ".env.runner-e2e.local"), dotenv.replaceAll("OUTPUT_ROOT", output));
-  async function launch(args: string[]) {
+  async function launch(args: string[], environment: NodeJS.ProcessEnv = {}) {
     try {
       return { code: 0, ...await promisify(execFile)(process.execPath,
         ["--import", path.resolve(import.meta.dirname, "../../cli/node_modules/tsx/dist/loader.mjs"), path.join(directory, "launch.ts"), ...args],
-        { cwd: repository, timeout: 20_000, env: { PATH: process.env.PATH, HOME: home, PAPERCLIP_E2E_CAMPAIGN_ID: "dotenv-probe" } }) };
+        { cwd: repository, timeout: 20_000, env: { PATH: process.env.PATH, HOME: home, PAPERCLIP_E2E_CAMPAIGN_ID: "dotenv-probe", ...environment } }) };
     } catch (error) {
       const result = error as { code: number; stdout: string; stderr: string };
       return { code: result.code, stdout: result.stdout, stderr: result.stderr };
     }
   }
-  return { repository, output, launch };
+  return { root, repository, output, launch };
 }
 
 it("uses the actual dotenv output root before a normal native campaign fails credential admission", async () => {
@@ -182,4 +184,46 @@ it.each(["list", "pending", "installed-startup"])("does not load dotenv in the %
     expect(result.stderr).toContain(mode === "pending" ? "prerequisite(s) are pending" : "Installed startup-only requires");
   }
   await expect(stat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+async function verifiedPrivateLaunch(f: Awaited<ReturnType<typeof shadowLauncher>>, executionId: string) {
+  const privateRoot = path.join(f.root, "verified-private"), file = path.join(privateRoot, "preflight.json");
+  await mkdir(privateRoot, { mode: 0o700 });
+  const identity = { workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1" };
+  await writeFile(file, JSON.stringify({ protocol: MANUAL_PRIVATE_PROTOCOL, status: "verified", private: true,
+    root: privateRoot, ...identity, executionIds: [executionId], cellReportProducer: await inspectCellReportProducer() }), { mode: 0o600 });
+  return { privateRoot, environment: { PAPERCLIP_RUNNER_E2E_PRIVATE_PREFLIGHT: file, RUNNER_TEMP: f.root,
+    GITHUB_SHA: identity.workflowSha, GITHUB_RUN_ID: identity.runId, GITHUB_RUN_ATTEMPT: identity.attempt,
+    PAPERCLIP_RUNNER_E2E_SOURCE_SHA: identity.targetSha } };
+}
+
+it.each([
+  ["process", "conflicting"], ["process", "invalid"], ["dotenv", "conflicting"], ["dotenv", "invalid"],
+] as const)("actual launcher keeps verified private custody over %s %s output settings", async (origin, kind) => {
+  const setting = kind === "invalid" ? "relative-invalid-root" : "OUTPUT_ROOT";
+  const f = await shadowLauncher(origin === "dotenv" ? `${RUNNER_E2E_RESULTS_ROOT}='${setting}'\n` : "");
+  const executionId = "kimi-qualification.runner-acpx-kimi.local.message-marker";
+  const custody = await verifiedPrivateLaunch(f, executionId);
+  const environment = { ...custody.environment,
+    ...(origin === "process" ? { [RUNNER_E2E_RESULTS_ROOT]: kind === "invalid" ? setting : f.output } : {}) };
+  const result = await f.launch(["--id", executionId], environment);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("Missing runner E2E credentials: KIMI_API_KEY");
+  expect(result.stderr).not.toContain("requires a normalized absolute directory");
+  expect((await stat(path.join(custody.privateRoot, "results/dotenv-probe"))).isDirectory()).toBe(true);
+  expect(result.stderr).toContain("Private evidence finalization failed; no public fallback");
+  for (const output of [f.output, path.join(f.repository, "tests/runner-e2e/results")])
+    await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("actual launcher rejects foreign private custody before reading dotenv or creating fallback output", async () => {
+  const f = await shadowLauncher("invalid dotenv assignment\n");
+  const executionId = "kimi-qualification.runner-acpx-kimi.local.message-marker";
+  const custody = await verifiedPrivateLaunch(f, executionId);
+  const result = await f.launch(["--id", executionId], { ...custody.environment, GITHUB_RUN_ID: "124" });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("Private evidence preflight does not match this exact attempt");
+  expect(result.stderr).not.toContain("Invalid .env.runner-e2e.local");
+  for (const output of [path.join(custody.privateRoot, "results"), f.output, path.join(f.repository, "tests/runner-e2e/results")])
+    await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
 });

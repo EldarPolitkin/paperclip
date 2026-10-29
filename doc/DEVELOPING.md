@@ -2885,6 +2885,11 @@ Environment overrides:
   non-numeric value falls back to the default.
 - `PAPERCLIP_WORKSPACE_COMPACTION_ENABLED=false` turns compaction off. Any other
   value keeps it on.
+- `PAPERCLIP_SKILL_PACKAGE_STORAGE_ENABLED=false` disables external writes and automatic
+  package maintenance for a coordinated rolling upgrade. Default: enabled. Legacy
+  conversion runs automatically in bounded batches, outside turn preparation.
+  Existing external packages remain readable with the override. See
+  [package storage and acquisition](skill-package-storage.md).
 - `PAPERCLIP_SKILL_VERSION_RETENTION_KEEP=<count>` sets how many of the newest
   materialized versions of each skill stay on disk (see "Skill Version Snapshot
   Retention" above). The default is `0`. A negative, empty, or non-numeric value

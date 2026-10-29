@@ -76,22 +76,17 @@ test("the generator cannot overwrite a versioned identity after source changes",
   }
 });
 
-test("profile 13 preserves retained historical candidate 12 while binding the merged runtime sources", () => {
-  const published = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v11-identity.json"));
-  assert.equal(createHash("sha256").update(published).digest("hex"), "1e9fc14d7f9978ee1fdfcb436f4cedca67a07c00551670157cf6658e7056e7f0");
-  const bytes = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v12-identity.json"));
-  assert.equal(createHash("sha256").update(bytes).digest("hex"), "4f3f208e83446e3ab64c74dc9f213472e5f828945c1972f55939b22c5c023578");
+test("profile 14 preserves published 12 and retained 13 while binding the reconciled backend", () => {
+  const published = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v12-identity.json"));
+  assert.equal(createHash("sha256").update(published).digest("hex"), "f43ac83f80fde04d8f184529502d3efc0df1b870d0ac8f863a183ae48eb6b004");
+  const bytes = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v13-identity.json"));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "ce76000eddf14e0c6caca659f40536c986e3101a72babc25c136bfbb0eee6ed5");
   const prior = JSON.parse(bytes.toString("utf8"));
-  const current = JSON.parse(readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v13-identity.json"), "utf8"));
+  const current = JSON.parse(readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v14-identity.json"), "utf8"));
   assert.deepEqual(current, grokProfileIdentity(root));
-  assert.equal(current.declaration.agentProfileVersion, 13);
+  assert.equal(current.declaration.agentProfileVersion, 14);
   assert.notEqual(current.commandDigest, prior.commandDigest);
   assert.deepEqual(Object.keys(current.declaration.sources).filter(path => current.declaration.sources[path] !== prior.declaration.sources[path]), [
-    "patches/acpx@0.13.1.patch",
-    "packages/paperclip-runner/src/drivers/acpx/runtime-host.ts",
-    "packages/paperclip-runner/src/drivers/preconfigured-home.ts",
-    "packages/paperclip-runner/src/drivers/acpx/runtime-sandbox.ts",
     "packages/paperclip-runner/runner/crates/runner-core/src/acpx_provider_backend.rs",
-    "packages/paperclip-runner/runner/crates/runner-core/src/acpx_sidecar_transport.rs",
   ]);
 });
