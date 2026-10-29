@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -71,5 +71,57 @@ test("real Turbo executes existing suite scripts and invalidates source, argumen
     write("input[one].txt", "fail");
     assert.notEqual(run().status, 0); assert.notEqual(run().status, 0);
     assert.equal(calls(), 7, "a failed task must execute on every attempt");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+
+test("CI launcher executes forced and uncacheable lanes after a cached result", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "ci-launcher-"));
+  const write = (name, content) => writeFileSync(path.join(directory, name), content);
+  const json = (name, value) => write(name, JSON.stringify(value));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: directory });
+    write(".gitignore", ".turbo/\nnode_modules/\nresult.txt\ncalls.txt\n");
+    mkdirSync(path.join(directory, "node_modules"), { recursive: true });
+    symlinkSync(path.dirname(turbo), path.join(directory, "node_modules/.bin"), "dir");
+    mkdirSync(path.join(directory, "packages/fixture"), { recursive: true });
+    json("packages/fixture/package.json", { name: "fixture", private: true });
+    json("package.json", {
+      name: "launcher-proof", private: true,
+      packageManager: JSON.parse(readFileSync(new URL("package.json", repositoryRoot), "utf8")).packageManager,
+      scripts: { "test:run:general": "node check.cjs" },
+    });
+    write("pnpm-workspace.yaml", "packages: ['packages/*']\n");
+    write("pnpm-lock.yaml", "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\nimporters:\n  .: {}\n  packages/fixture: {}\n");
+    json("turbo.json", {
+      globalEnv: ["CI_TASK_CACHE_SCOPE"],
+      globalDependencies: ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+      tasks: { "//#ci:server": {
+        inputs: ["input.txt", "check.cjs"], outputs: ["result.txt"], cache: true,
+      } },
+    });
+    write("input.txt", "input");
+    write("check.cjs", "const fs = require('node:fs'); if (!process.argv.includes('general-server-without-chat')) process.exit(2); fs.appendFileSync('calls.txt', 'call\\n'); fs.writeFileSync('result.txt', 'passed');");
+    const run = (extra = {}) => {
+      const result = spawnSync(process.execPath, [new URL("run-task.mjs", import.meta.url).pathname], {
+        cwd: directory, encoding: "utf8", env: {
+          ...process.env, CI_TASK: "ci:server", CI_TASK_ARGS: "[]",
+          CI_FORCE_TASKS: "false", CI_TASK_DRY_RUN: "false", ...extra,
+        },
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+    };
+    const calls = () => readFileSync(path.join(directory, "calls.txt"), "utf8").trim().split("\n").length;
+    run();
+    assert.equal(calls(), 1);
+    rmSync(path.join(directory, "result.txt"));
+    run();
+    assert.equal(calls(), 1, "the normal launcher must reuse its cached result");
+    assert.equal(readFileSync(path.join(directory, "result.txt"), "utf8"), "passed");
+    run({ CI_FORCE_TASKS: "true" });
+    assert.equal(calls(), 2, "an explicitly forced lane must execute despite a cached result");
+    symlinkSync("input.txt", path.join(directory, "unclassified-link"));
+    run();
+    assert.equal(calls(), 3, "an uncacheable source entry must execute despite a cached result");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
