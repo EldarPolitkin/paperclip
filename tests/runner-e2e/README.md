@@ -3118,3 +3118,21 @@ This stage verifies the pinned package closure without inference. Actual Linux
 installation, full runtime fingerprint, negotiated live steering and feature
 model/usage remain remote qualification gates. The CEO remains native OpenCode
 DeepSeek 1017; Pi Sonnet 4.6 is the explicitly selected feature runtime.
+
+The steering delivery candidate binds the approved target Pi profile **30** and
+its exact `sha256:4517ab123dd89140ef462fc1905ac7a16a0dfcbaf21d67299a3c62de29c08a4d`
+command identity, with the 1,206-file reviewed target runner/patch source closure.
+It does not substitute the workflow checkout's newer Pi profile. The existing
+SHA-verified target build bundle supplies the actual provisioner; its emitted
+hash and installation identity remain real remote outputs, not source guesses.
+
+A failed or cancelled preframework preparation is a distinct private operation,
+with `frameworkStarted=false` and null runtime fingerprint. Only its typed
+operation record and known captured installer stdout/stderr enter the existing
+standard original sealer and exact-key private uploader. Unknown retirement or
+output capture remains explicit. The same guarded download path validates the
+operation and stops feature-report aggregation because no case result exists.
+It creates no case result, grade, ordinal or PASS. Ordinary cells still require
+sealed results. Existing raw, encoded and provider-shape checks remain fatal;
+contaminated evidence has no public fallback. The frozen steering target still
+needs its separately reviewed post-fingerprint receipt consumer before use.
