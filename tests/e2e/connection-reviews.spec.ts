@@ -329,15 +329,15 @@ for (const journey of [
       } else {
         await expect(resolvedReview.getByText(journey === "decline" ? "Declined" : "Execution failed", { exact: false })).toBeVisible();
       }
-      await expect(page.getByTestId("task-chat-history-content")).toBeVisible({
-        timeout: 30_000,
-      });
       await expect(resolvedReview).toContainText("List fixture pages");
       const persistedReply = page.locator(`[id=${JSON.stringify(`comment-${reply.id}`)}]`);
       await expect(persistedReply).toBeVisible();
       await expect(persistedReply).toContainText(
         journey === "decline" ? "Review declined" : journey === "failure" ? "Read failed" : "Roadmap",
       );
+      await expect(page.getByTestId("task-chat-history-content")).toBeVisible({
+        timeout: 30_000,
+      });
       await page.screenshot({
         path: testInfo.outputPath("resolved-review.png"),
       });
