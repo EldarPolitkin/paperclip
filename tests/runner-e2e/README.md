@@ -1049,6 +1049,18 @@ published with permanent campaign dashboards; fixture authors must therefore
 keep credentials and other private data out of every captured UI state. SVG is
 active content and is rejected from the packaged evidence entirely.
 
+For native matrix campaigns, set `PAPERCLIP_RUNNER_E2E_RESULTS_ROOT` to a
+dedicated normalized absolute directory outside the checkout, for example
+`/private/tmp/paperclip-product-evidence`. Final attempt packages, campaign JSON,
+and dashboards are written there directly, so removing a checkout does not
+remove their evidence. The default remains `tests/runner-e2e/results`.
+Empty/relative paths, traversal, filesystem/home/checkout roots, and symbolic-link
+paths are rejected before credentials load. The output root is owner-only.
+Use a distinct `PAPERCLIP_E2E_CAMPAIGN_ID` for each invocation to preserve earlier
+attempts. This changes storage only; required evidence, redaction, grades, and
+temporary-instance cleanup retain their existing checks. Provider-connection,
+GitHub-review, and product-journey launchers retain their separate output contracts.
+
 The standard task and chat evidence collectors read durable run events through the paginated
 public API, including completion events beyond the first 1,000 rows. It rejects
 missing, repeated, or out-of-order sequence numbers and fails capture after

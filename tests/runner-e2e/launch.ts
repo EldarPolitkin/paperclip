@@ -32,7 +32,8 @@ import {
 } from "node:fs/promises";
 import { isImmutableDaytonaImage, runnerMatrix } from "./catalog.js";
 import { renderRunnerE2EDashboard } from "./dashboard.js";
-import { packageEvidence } from "./evidence.js";
+import { publishRunnerE2EAttemptEvidence } from "./evidence.js";
+import { prepareRunnerE2ECampaignDirectory, resolveRunnerE2EResultsRoot } from "./results-root.js";
 import { copySharedEvidence } from "./shared-evidence.js";
 import { classifyFailure } from "./failure-classifier.js";
 import { mustPreserveRecoveryState, shouldKeepFailedDiagnostics } from "./cleanup-verification.js";
@@ -89,7 +90,7 @@ import {
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const localEnvPath = path.join(repositoryRoot, ".env.runner-e2e.local");
-const resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
+let resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
 const activeProcessGroups = new Set<number>();
 const activeProcessCleanup = new Map<number, Promise<string | null>>();
 const activeProcessTerminators = new Map<number, () => void>();
@@ -462,6 +463,7 @@ async function runAttempt(input: {
   operations?: EvalOperations;
 }): Promise<RunnerE2EResult[]> {
   const { executions, attempt, campaignId, options } = input;
+  await prepareRunnerE2ECampaignDirectory(resultsRoot, campaignId);
   const accountingCampaignId = input.operations?.manifest.limits.campaignId ?? process.env.PAPERCLIP_E2E_ACCOUNTING_CAMPAIGN_ID ?? campaignId;
   const accountingAttemptId = randomBytes(16).toString("hex");
   const traceConfig = evalBraintrustConfig({ ...process.env, PAPERCLIP_E2E_OTLP_RELAY_URL: undefined });
@@ -740,7 +742,7 @@ async function runAttempt(input: {
       }
     }
     for (const [index, candidate] of executions.entries()) {
-      let result = {
+      let result: RunnerE2EResult = {
         ...results[index],
         accountingIdentity: { campaignId: accountingCampaignId, attemptId: accountingAttemptId },
       };
@@ -798,7 +800,6 @@ async function runAttempt(input: {
         }
       }
       const casePrivateDir = path.join(privateDir, "cases", candidate.task.id);
-      const resultPath = path.join(casePrivateDir, "result.json");
       const uploadDir = path.join(
         resultsRoot,
         campaignId,
@@ -820,42 +821,13 @@ async function runAttempt(input: {
           originalResult: { status: original.status, failureClass: original.failureClass, error: original.error },
         }, credentials), null, 2)}\n`, { mode: 0o600 });
       }
-      await writeFile(
-        resultPath,
-        `${JSON.stringify(sanitizeJson(result, credentials), null, 2)}\n`,
-        "utf8",
-      );
-      let evidence = await packageEvidence({
+      result = await publishRunnerE2EAttemptEvidence({
+        result,
+        resultsRoot,
         privateDir: casePrivateDir,
         uploadDir,
         secrets: credentials,
-        expectPassScreenshot: result.status === "passed",
       });
-      if (evidence.leaks.length > 0 || evidence.missing.length > 0) {
-        result = {
-          ...result,
-          status: "failed",
-          failureClass:
-            evidence.leaks.length > 0
-              ? "secret_leak"
-              : "permanent_infrastructure",
-          error:
-            evidence.leaks.length > 0
-              ? `Secret leak rejected from evidence: ${evidence.leaks.map((leak) => leak.file).join(", ")}`
-              : `Required evidence missing: ${evidence.missing.join(", ")}`,
-        };
-        await writeFile(
-          resultPath,
-          `${JSON.stringify(sanitizeJson(result, credentials), null, 2)}\n`,
-          "utf8",
-        );
-        evidence = await packageEvidence({
-          privateDir: casePrivateDir,
-          uploadDir,
-          secrets: credentials,
-          expectPassScreenshot: false,
-        });
-      }
       console.log(
         `${result.status === "passed" ? "PASS" : "FAIL"} ${candidate.id} attempt ${attempt} -> ${uploadDir}`,
       );
@@ -1037,6 +1009,7 @@ async function main() {
     const { launchProductJourneys } = await import("./product-journeys/launch.js");
     return launchProductJourneys(args, repositoryRoot);
   }
+  resultsRoot = resolveRunnerE2EResultsRoot(repositoryRoot);
   let options: ReturnType<typeof parseRunnerSelectors>;
   try {
     options = parseRunnerSelectors(process.argv.slice(2));
@@ -1094,8 +1067,7 @@ async function main() {
     process.env.PAPERCLIP_E2E_CAMPAIGN_ID ??
       `local-${new Date().toISOString().replace(/[:.]/g, "-")}`,
   );
-  const summaryDir = path.join(resultsRoot, campaignId);
-  await mkdir(summaryDir, { recursive: true });
+  const summaryDir = await prepareRunnerE2ECampaignDirectory(resultsRoot, campaignId);
   if (executions.some(execution => execution.suite.id === "native-completion")) {
     process.env[NATIVE_COMPLETION_PREFLIGHT_ENV] = prepareNativeCompletionPreflight(summaryDir);
   }
