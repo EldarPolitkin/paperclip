@@ -106,15 +106,70 @@ Pi34, Grok13 and Copilot81. Published master history takes precedence over
 conflicting unmerged candidate variants; original candidate bytes and commits
 remain on preserved backup refs.
 
-The foundation PR #18028 at `08a5516b` and product PR #18029 at `f7ac439e`
-have fresh Greptile 5/5, no unresolved threads, and green CI. They remain draft
-because real acceptance is incomplete. Full typecheck and build passed. The
+The foundation PR #18028 at `08a5516b` and product PR #18029 at `6123a67a`
+had green CI at those heads. The product review was Greptile 5/5 with one
+actionable report configuration load-order comment. That comment is addressed
+in the subsequent harness repair; fresh-head CI/review remain required. Both
+PRs remain draft because real acceptance is incomplete. Full typecheck and build passed. The
 local full test command failed three AI-connection cases after a first 15-second
 timeout, then accumulated an idle-transaction/TRUNCATE wait chain in the unchanged
 Git-expiration suite. The three connection cases passed separately without
 source changes. The full command was interrupted after recording the lock chain;
 all owned processes and its database port were independently verified stopped.
 This is not a full local test pass or an established explanation of every failure.
+
+Recovery and re-evidence on 2026-10-29:
+
+- The previous checkout and its worktree registration disappeared. The cause is
+  unknown. Pushed source was restored into a newly attached managed worktree;
+  frozen dependency installation and the full build passed again. Historical
+  local pass logs and all ten audited result hashes survived, but the original
+  raw report packages did not. Those passes are not reconstructed from logs or
+  synthetic calibration evidence.
+- Commit `6123a67a` adds an explicit absolute report-root override with unchanged
+  default storage, physical output containment, and traversal/symlink rejection.
+  Actual final publication was checked across checkout removal, early failure,
+  redaction, and missing mandatory evidence. The repair passed 123 focused
+  evidence tests, seven sentinel tests, harness typecheck, actual CLI admission
+  checks, and independent outside-sentinel preservation. These are harness
+  controls, not provider acceptance.
+- All ten fresh local profile9 cells passed at exact `6123a67a`, including final
+  packaging and cleanup. Their original packages now live outside the checkout.
+  Independent collection rehashed all 221 files without mismatch; each owned
+  server and embedded database stopped and each temporary data root was absent.
+  The 19 retained run records are not a model-call count.
+- An independent temporary Cloud TEST credential reached the global Kimi endpoint
+  and the exact installed Linux9 runtime passed native startup. The first
+  controller attempt then failed before any test body: a Promise resolver
+  shadowed the path resolver during event validation. The original failed and
+  cleanup-failed grade remains. Credential-free actual-event replay reproduced
+  the error and verified the correction. Empty JUnit suites, retained Playwright
+  events, and source readiness gates establish that product fixture allocation
+  and provider admission were never reached. Owned processes/ports were absent;
+  the independent preflight sandbox was deleted and checked404, and the temporary
+  credential was revoked and checked absent.
+- The corrected controller reached the actual first Daytona cell. That attempt
+  failed closed at `remote_native_fixture:lease_metadata`: its fixture selected a
+  reusable warm environment, while the native lifecycle observer requires an
+  isolated non-reusable lease. The observer guard is retained. Both observed
+  owned sandboxes were separately deleted and checked404; its temporary credential
+  was revoked and checked absent. The original failed and cleanup-failed grade
+  remains; model usage is unavailable. A narrow fixture-producer correction and
+  fresh Daytona acceptance are required before qualification.
+
+The follow-up harness repair at `d5fc5c42` changes only the two remote native
+lifecycle fixture configurations to isolated non-reusable leases. The eight
+other Daytona cases remain warm and all ten local execution inputs are
+unchanged. This per-case override is included in the suite fingerprint. The real
+fixture-producer regression first failed both lifecycle cases, then passed with
+three unchanged controls. The strict remote observer is unchanged. The same
+repair loads the normal campaign report setting from its local environment file
+after admission, with a credential-free actual-launch red/green regression;
+listing and installed-startup admission retain their prior behavior. Focused
+catalog/producer/observer/storage checks passed 227 tests with one existing skip,
+and harness typecheck passed. Native profile9, vendor closures and image inputs
+are unchanged; retain the fresh local evidence at `6123a67a` and pin a fresh
+Daytona campaign to the repaired source rather than relabeling old attempts.
 
 Material local attempts remain distinct:
 
