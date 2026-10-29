@@ -56,27 +56,25 @@ qualification passes. Provider registration does not migrate legacy agents.
 
 | Required gate | Environment | Observation | Verdict |
 | --- | --- | --- | --- |
-| Exact model and instructions | local and Daytona | Profile9 installed native create/load/model acknowledgments passed on both platforms; final authenticated product matrix remains incomplete | partial |
-| Scoped tools and credentials | local and Daytona | Native v6 controlled peer, isolated installed runtime, and real local pending Write passed; no ambient credential fallback | partial |
-| Ordinary setup | local and Daytona | Save/reopen/Test/run/reconnect and assigned skill still required; isolated hosted target now requested | unattempted |
-| Useful task | local and Daytona | Profile9 local exact reply, accepted completion, workspace bytes and downloaded artifact bytes passed; authenticated Daytona remains blocked | partial |
-| Human input and Stop | local and Daytona | Profile9 local Stop, native child loss, semantic answers and plan revision passed with durable decisions and cleanup; Daytona remains | partial |
-| Continuation and child loss | local and Daytona | All local restart, question recovery, native loss and Stop/follow-up cases passed; Daytona remains | partial |
-| Installed distribution | macOS arm64 and Linux x64 | Profile9 installed packages/image passed within their original scope; reconciled pending10 requires fresh native binaries, packages and image | partial |
-| Regression and repository checks | candidate revision | Typecheck/build and both current PR CI suites passed; local full-suite failure and its separate successful three-case reproduction remain recorded | partial |
+| Exact model and instructions | local and Daytona | Pending11 pinned native create/load/model/instruction controls passed on both platforms; the current authenticated product matrix remains incomplete | partial |
+| Scoped tools and credentials | local and Daytona | Native v6 credential fences passed; the first pending11 Daytona task received its exact full scoped context result and reached the intended unanswered Write | partial |
+| Ordinary setup | installed local and isolated hosted test | Ordinary connect/save/reopen/Test/run/reconnect and assigned-skill behavior remain required | unattempted |
+| Useful task | local and Daytona | Historical profile9 local files/downloads and one Daytona message passed; pending11 useful-task cells remain | partial |
+| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; pending11 first Daytona Stop attempt failed in its fixture before Stop was submitted | partial |
+| Continuation and child loss | local and Daytona | Historical local restart/question/loss/follow-up cells passed; pending11 requires a fresh full matrix | partial |
+| Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
+| Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the remote-PID repair passed 63 module tests, nine selected assembled controls and server typecheck; final full checks remain | partial |
 
-Current pending10 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
-Profile9 results remain historical support; changed-runtime qualification and a
-later release promotion require fresh evidence and artifact checks.
-Each gate's detailed cells and attempts will be recorded before qualification;
-these grouped gates are not a substitute for per-environment passing evidence.
+Current pending11 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
+The current twenty-cell matrix has no passing cells yet. Profile9 results remain
+historical support. These grouped gates do not replace per-cell evidence.
 
 The explicit-only `kimi-qualification` Product E2E suite has 20 required cells:
 message-marker, plan-revise-accept, ask-question, structured-question-resume,
 structured-question-restart-resume, file-edit-validate, continuity-restart, and
 stop-new-resume, native pending-permission Stop, and native pending-permission worker loss, each on local and Daytona. Each has one required repetition and
-zero automatic paid retries. All ten local cells passed with report packaging and
-cleanup. Stop retains source `821256d6`, campaign
+zero automatic paid retries. Historically, all ten profile9 local cells passed
+with report packaging and cleanup. Stop retains source `821256d6`, campaign
 `local-2026-10-29T14-46-04-979Z`, run `91557abb-b9c0-422d-af1e-f0e82e948e96`.
 The other nine retain source `f7ac439e` and their individual campaigns between
 15:10 and 15:33 UTC. The qualification-only observer correction leaves all native
@@ -103,6 +101,67 @@ Assigned-skill behavior and ordinary connect/save/reopen/Test/run/reconnect rema
 separate requirements, including the requested hosted test workspace.
 
 ## Current state
+
+Pending Kimi11 and Copilot83 are frozen after the actual lock-refresh prerequisite
+was merged. The prerequisite's squash commit has the same complete tree as the
+reviewed source. Genuine merges preserved all published identity fixtures and
+the managed lockfile; no history-only reconciliation or policy bypass was used.
+
+Fresh pending11 Mac native controls passed. The Linux qualification image was
+built, published under an immutable digest, and independently checked against all
+42 exported layers, native executable hashes, and installed metadata readers.
+These are delivery prerequisites, not the twenty authenticated Product E2E cells.
+
+The first pending11 Daytona Stop attempt reached real inference, one normal UI
+Allow once for the scoped empty-input context read, and the exact intended native
+Write permission. It failed before submitting Stop. The fixture incorrectly
+equated the native turn with the controller envelope turn and tried to parse a
+bounded display event as the full tool result. The official encrypted checkpoint
+retained the full matching result and its completed delivery acknowledgment.
+
+The run then reached its configured 120-second timeout. Recovery later overwrote
+that error after mistaking the remote numeric PID for an unrelated live process
+on the controller host. Commit `a24ebd5e7e3fa0d086e91cd3824efd52c8eaee0b`
+requires exact current host-authored local process identity before local probes
+or clearing. Remote or unknown identities stay under native recovery authority.
+Real PostgreSQL tests reproduce both remote collision states, preserve verified
+local live/dead behavior, and retain authenticated remote termination handling.
+
+The corrected fixture passed 62 deterministic controls, targeted typecheck,
+and the real MCP/sidecar/Core-to-official-PostgreSQL boundary with seven
+negative scope/session controls. It positively bridges native and controller
+turns through the exact authenticated request and delivered command. It binds
+the logical workspace separately from the physical observer lease and retains
+the original calibration fixture as version1 beside the new version2 fixture.
+The current suite is version4 and remains explicitly pending.
+
+The original failed/cleanup-failure verdict and raw reports remain unchanged.
+Separate cleanup verified every owned sandbox absent and revoked the temporary
+test key. The fixture's later close error did not establish its retirement seal;
+no cleanup check is relaxed. The generic ACPX display clipping metadata defect
+is pre-existing and remains a documented limitation; full model-facing delivery
+uses a separate acknowledged path.
+
+The repair changes controller recovery and qualification fixtures. It does not
+change the Kimi native patch, either closure, the tested Mac binaries, or the
+Linux image inputs. A new matrix revision must record the exact reviewed delta
+and rebuilt server identity while retaining the original artifact build SHAs.
+The next paid action is one corrected Daytona Stop cell after strict checkpoint
+bridge controls pass. Its original grade, raw files and physical cleanup must
+pass independent audit before the remaining nine remote and ten local cells.
+
+After all twenty cells pass, promote ordinary admission in a separate reviewable
+qualification PR, build the normal four-platform daemon/public-package set, and
+verify the installed local UI. Then deploy the exact qualified revision only to
+the user-approved isolated `kimi.test.paperclip.app` test workspace and drive the
+ordinary hosted configuration, assigned-skill, artifact and persistence journey.
+Production, fleet defaults, stable publication and GitHub merge remain outside
+this handoff.
+
+## Reconciliation and earlier qualification history
+
+The following records describe earlier candidate states and their original
+evidence. The current state above supersedes their next-step and blocker text.
 
 The next shipping prerequisite is now frozen at the existing lock-refresh PR
 [#18185](https://github.com/paperclipai/paperclip/pull/18185), head
