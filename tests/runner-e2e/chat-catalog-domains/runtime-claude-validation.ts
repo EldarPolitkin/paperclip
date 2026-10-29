@@ -11,7 +11,7 @@ import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 export const validationOperation = "POST /api/companies/{companyId}/adapters/{type}/test-environment";
 const model = "openrouter/deepseek/deepseek-v4.1-flash-1017";
-const authCodes = new Set(["opencode_hello_probe_auth_required", "ai_connection_api_key_rejected", "adapter_auth_missing"]);
+const authCodes = new Set(["opencode_hello_probe_auth_required", "ai_connection_api_key_rejected"]);
 export function actualAuthenticationFailure(codes: readonly string[]) { return codes.some(code => authCodes.has(code)); }
 // Same canonical request identity as the existing native authority producer.
 function canonical(v: unknown): string {
@@ -83,6 +83,11 @@ export function gradeClaudeValidation(value: unknown) {
   return c.result();
 }
 function targetHeld(agent: Agent) { return agent.status === "paused" && agent.lifecycleState === "paused" && agent.pauseReason === "setup" && Array.isArray(record(agent).lifecycleHolds) && (record(agent).lifecycleHolds as unknown[]).includes("setup"); }
+export function validationTargetSetupMatches(agent: Agent, expected: { id: string; companyId: string; leadId: string; environmentId: string; binding: unknown }) {
+  return agent.id === expected.id && agent.companyId === expected.companyId && agent.name === "Morgan" && agent.reportsTo === expected.leadId
+    && targetHeld(agent) && agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "opencode" && agent.adapterConfig.model === model
+    && agent.adapterConfig.timeoutSec === 0 && agent.defaultEnvironmentId === expected.environmentId && isDeepStrictEqual(agent.runtimeConfig.aiConnection, expected.binding);
+}
 const identities = (rows: AiConnectionList["connections"]) => rows.map(a => ({ id: a.id, grantId: a.grantId, provider: a.provider })).sort((a,b) => a.id.localeCompare(b.id));
 async function targetRuns(ctx: ChatCatalogContext, workerId: string) {
   const runs = await ctx.input.api.getRunObservation<Array<{ agentId: string }>>(`/api/companies/${ctx.input.fixtures.company.id}/heartbeat-runs?limit=100`);
@@ -93,7 +98,7 @@ export const runtimeClaudeValidationCases = [runtimeDefinition("runs-adapters.va
   const companyId = fixtures.company.id, environmentId = fixtures.environment.id;
   if (selected.values.targetRef !== "fixture.environment" || selected.values.accountBindingRef !== "OPENROUTER_API_KEY" || !privateSecrets) throw new Error("Validation requires the exact owned native target and private input sink");
   const [environment, lead] = await Promise.all([api.get<{ id: string; driver: string; status: string }>(`/api/environments/${environmentId}`), api.get<Agent>(`/api/agents/${fixtures.agent.id}`)]);
-  if (!selected.resourceIds.some(id => id === environmentId || id === "fixture.environment") || environment.id !== environmentId || environment.driver !== "local" || environment.status !== "active" || lead.adapterType !== "paperclip_runner" || lead.adapterConfig.provider !== "opencode" || lead.adapterConfig.model !== model || lead.lifecycleState !== "ready" || lead.runtimeConfig.aiConnection?.mode !== "delegated" || lead.runtimeConfig.aiConnection.provider !== "openrouter") throw new Error("Validation requires the real native OpenCode controller and owned local environment");
+  if (!selected.resourceIds.some(id => id === environmentId || id === "fixture.environment") || environment.id !== environmentId || environment.driver !== "local" || environment.status !== "active" || lead.adapterType !== "paperclip_runner" || lead.adapterConfig.provider !== "opencode" || lead.adapterConfig.model !== model || lead.adapterConfig.timeoutSec !== 0 || lead.lifecycleState !== "ready" || lead.runtimeConfig.aiConnection?.mode !== "delegated" || lead.runtimeConfig.aiConnection.provider !== "openrouter") throw new Error("Validation requires the real native OpenCode controller and owned local environment");
   const credential = selected.credentials.OPENROUTER_API_KEY!, invalid = `eval-invalid-${randomUUID()}`;
   privateSecrets.push(credential, invalid);
   // New connection, no connectionId: provider key stays unchanged; only a fresh app slot is later rotated.
@@ -101,10 +106,12 @@ export const runtimeClaudeValidationCases = [runtimeDefinition("runs-adapters.va
     provider: "openrouter", method: "api_key", name: "Morgan validation account", ownership: "personal", apiKey: credential, allAgents: false, agentIds: [],
   });
   const binding = { provider: "openrouter", method: "api_key", mode: "delegated", connectionId: account.connectionId, grantId: account.grantId };
-  const worker = await api.post<Agent>(`/api/companies/${companyId}/agents`, { setupId: randomUUID(), name: "Morgan", role: "engineer", title: "Frontend engineer", reportsTo: lead.id,
-    adapterType: "paperclip_runner", runner: "paperclip", adapterConfig: { provider: "opencode", model, cwd: ctx.input.workspacePath, opencodePermissionMode: "allow", lifecycleMode: "per_turn" },
+  const setupId = randomUUID();
+  const worker = await api.post<Agent>(`/api/companies/${companyId}/agents`, { setupId, name: "Morgan", role: "engineer", title: "Frontend engineer", reportsTo: lead.id,
+    adapterType: "paperclip_runner", runner: "paperclip", adapterConfig: { provider: "opencode", model, cwd: ctx.input.workspacePath, opencodePermissionMode: "allow", lifecycleMode: "per_turn", timeoutSec: lead.adapterConfig.timeoutSec },
     defaultEnvironmentId: environmentId, runtimeConfig: { heartbeat: { enabled: false, maxConcurrentRuns: 1 }, aiConnection: binding } });
-  if (!targetHeld(worker)) throw new Error("Actual saved Morgan did not remain on its public setup hold");
+  const targetExpected = { id: setupId, companyId, leadId: lead.id, environmentId, binding };
+  if (!validationTargetSetupMatches(worker, targetExpected)) throw new Error("Actual saved Morgan did not remain on its public setup hold");
   const before = await api.get<AiConnectionList>(`/api/companies/${companyId}/ai-connections`), target = before.connections.find(a => a.id === account.connectionId && a.grantId === account.grantId);
   if (!target || target.provider !== "openrouter" || target.status !== "connected" || target.ownership !== "personal" || lead.runtimeConfig.aiConnection?.mode === "delegated" && lead.runtimeConfig.aiConnection.connectionId === target.id) throw new Error("Fresh separate target account was not genuinely eligible");
   const rows = await api.get<Array<{ definition: { id: string; key: string; companyId: string }; secret: { id: string; scope: string; ownerUserId: string; companyId: string; userSecretDefinitionId: string; status: string } | null }>>(`/api/companies/${companyId}/me/user-secrets`);
@@ -113,7 +120,7 @@ export const runtimeClaudeValidationCases = [runtimeDefinition("runs-adapters.va
   await api.postSensitive(`/api/companies/${companyId}/me/user-secrets/${slots[0]!.secret!.id}/rotate`, { value: invalid });
   const access = await probeAgentPermission(ctx, `/api/agents/${worker.id}`, "GET");
   const actual = await api.get<Agent>(`/api/agents/${worker.id}`), after = await api.get<AiConnectionList>(`/api/companies/${companyId}/ai-connections`);
-  if (access !== 200 || !targetHeld(actual) || await targetRuns(ctx, worker.id) !== 0 || !after.connections.some(a => a.id === target.id && a.grantId === target.grantId && a.status === "connected")) throw new Error("Saved target must remain visible, selectable and unstarted until canonical validation");
+  if (access !== 200 || !validationTargetSetupMatches(actual, targetExpected) || await targetRuns(ctx, worker.id) !== 0 || !after.connections.some(a => a.id === target.id && a.grantId === target.grantId && a.status === "connected")) throw new Error("Saved target must remain visible, selectable and unstarted until canonical validation");
   return { worker: actual, targetConnectionId: target.id, targetGrantId: target.grantId, accountIdentities: identities(after.connections), controllerBefore: lead,
     actualAccountEligible: true, noTargetWorkBeforeQuery: true, targetVisibleToController: true,
     providerProbes: [{ phase: "setup-target-account-key-verification", operation: "create-ai-connection", publicProbeCount: 1, usage: "unavailable", cost: "unavailable" }] };
