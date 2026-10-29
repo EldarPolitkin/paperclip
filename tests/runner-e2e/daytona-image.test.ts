@@ -165,7 +165,13 @@ describe("runner E2E Daytona image contract", () => {
       "test-fixtures/pi-acp/profile-v19-identity.json",
       "test/fixtures/copilot-profile-v16-identity.json",
     ]) {
-      expect(dockerignore).toContain(`!packages/paperclip-runner/${declaration}`);
+      const fixturePath = `packages/paperclip-runner/${declaration}`;
+      const lastRule = dockerignore.split(/\r?\n/).filter(rule => rule && !rule.startsWith("#")).filter(rule => {
+        const pattern = rule.startsWith("!") ? rule.slice(1) : rule;
+        return path.matchesGlob(fixturePath, pattern) || fixturePath.startsWith(`${pattern}/`);
+      }).at(-1);
+      expect(lastRule, declaration).toBeDefined();
+      expect(lastRule?.startsWith("!"), declaration).toBe(true);
       await expect(readFile(path.join(repositoryRoot, "packages/paperclip-runner", declaration), "utf8")).resolves.toBeTruthy();
     }
     for (const developmentOnlyInput of [

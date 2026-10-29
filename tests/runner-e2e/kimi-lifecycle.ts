@@ -1,3 +1,5 @@
+import { kimiContextRendezvousPrompt, pendingKimiContextPermission, publishKimiContextContinuation, approveKimiContextThroughUi, readKimiContextProof, type KimiContextProof } from "./kimi-context-rendezvous.js";
+import { createKimiContextCheckpointObserver } from "./kimi-context-checkpoint.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
@@ -57,6 +59,7 @@ export async function runKimiLifecycleFlow(input: {
   let processes: ReturnType<ReturnType<typeof observeRunProcesses>["sample"]> = { captured: false, journal: [], live: [] };
   let fixture: RemoteNativeFixture | undefined, baseline: NativeRemoteSnapshot | undefined, pendingSnapshot: NativeRemoteSnapshot | undefined, sealed: NativeRemoteSnapshot | undefined;
   let completed: Awaited<ReturnType<typeof dispatchKimiLifecycleAction>> | undefined;
+  let contextProof: KimiContextProof | undefined, publishedAction: string | undefined;
   const authority = () => { const run = runs[0]!; return { pid: run.processPid, groupId: run.processGroupId, startedAt: run.processStartedAt, runId: run.id }; };
   const observeProcesses = () => {
     if (!observer || !runs[0]?.processPid) return;
@@ -72,7 +75,7 @@ export async function runKimiLifecycleFlow(input: {
     events = runs[0] ? await collectRunEvents<Row>((afterSeq, limit) => api.get(`/api/heartbeat-runs/${runs[0]!.id}/events?afterSeq=${afterSeq}&limit=${limit}`)) : [];
     observeProcesses(); input.observe(issue, runs); return { issue, run: runs[0] ?? {}, events };
   };
-  const scope = (): KimiLifecycleScope => ({ companyId: fixtures.company.id, issueId: issue.id, runId: runs[0]!.id, target, ...(fixture ? { actionFile: fixture.actionFile } : {}) });
+  const scope = (): KimiLifecycleScope => ({ companyId: fixtures.company.id, issueId: issue.id, runId: runs[0]!.id, target, ...(fixture ? { actionFile: fixture.actionFile } : {}), ...(contextProof ? { contextProof } : {}) });
   const sample = async (phase: string) => {
     const absent = !await exists(local!.targetPath); samples.push({ phase, absent }); check(`no-effect-${phase}`, absent, "Exact unapproved Write target remains absent");
   };
@@ -112,17 +115,36 @@ export async function runKimiLifecycleFlow(input: {
     check("per-turn-native-policy", configured.adapterConfig?.acpxPermissionMode === "approve-reads" && configured.adapterConfig?.lifecycleMode === "per_turn", "Restrictive native permission policy and per-turn ownership selected before dispatch");
     const project = await api.post<Row>(`/api/companies/${fixtures.company.id}/projects`, { name: `Kimi native lifecycle ${nonce}`, executionWorkspacePolicy: { enabled: true, defaultMode: "shared_workspace", sharedWorkspaceConcurrency: "serialize", allowIssueOverride: false, environmentId: fixtures.environment.id, workspaceStrategy: { type: "project_primary" } }, workspace: { name: "Primary", sourceType: "local_path", cwd: input.workspacePath, isPrimary: true } });
     if (!remote) await sample("before-request");
+    if (remote) input.remoteBootstrap!.prompt(nonce);
     const created = await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title: execution.task.buildTitle(nonce),
-      prompt: remote ? `${input.remoteBootstrap!.prompt(nonce)}\nUse native Kimi Read only for that one action file, with its absolute path in your current working directory. Do not read any other path or call a semantic tool.` : prompt(), workMode: "standard", projectName: project.name, requireExplicitTitle: true });
+      prompt: remote ? kimiContextRendezvousPrompt() : prompt(), workMode: "standard", projectName: project.name, requireExplicitTitle: true });
     issue = (await pollUntil({ label: "browser-created Kimi lifecycle task", deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(row => row.id === created.issueId), accept: Boolean }))!;
     if (remote) {
       await pollUntil({ label: "Kimi native remote bootstrap", deadlineAt: input.deadlineAt, load, accept: value => value.run.status === "running" });
       const bound = await input.remoteBootstrap!.bindAndRelease({ issueId: issue.id, runId: runs[0]!.id, targets: [target], actionPrompt: async value => {
         fixture = value;
         const prepared = await prepareNativeRemoteAction({ fixture: value, companyId: fixtures.company.id, environmentId: fixtures.environment.id, runId: runs[0]!.id, target, prompt: prompt() });
-        baseline = prepared.baseline; await input.evidence("kimi-native-before-action-remote.json", baseline); return prepared.prompt;
+        baseline = prepared.baseline; publishedAction = prepared.prompt; await input.evidence("kimi-native-before-action-remote.json", baseline); return prepared.prompt;
       } });
       if (bound !== fixture) throw new Error("Kimi native action publication changed its fixture identity");
+      const contextScope = { companyId: fixtures.company.id, agentId: fixtures.agent.id, environmentId: fixtures.environment.id, issueId: issue.id, runId: runs[0]!.id };
+      const pending = await pollUntil({ label: "exact scoped Kimi context permission", deadlineAt: input.deadlineAt, intervalMs: 200,
+        load: async () => pendingKimiContextPermission((await load()).events, contextScope), accept: Boolean });
+      if (!pending || publishedAction === undefined) throw new Error("Kimi context rendezvous lacks its exact action publication");
+      const publication = await publishKimiContextContinuation({ pending, action: publishedAction, fixture: fixture!, api });
+      await input.evidence("kimi-context-publication.json", publication);
+      await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+      const contextObserver = await createKimiContextCheckpointObserver(publication);
+      try {
+        await approveKimiContextThroughUi({ page, publication, load, evidence: input.evidence });
+        contextProof = await pollUntil({ label: "delivered scoped Kimi context result", deadlineAt: input.deadlineAt, intervalMs: 200,
+          load: async () => {
+            const state = await load(), authority = await contextObserver.read();
+            return readKimiContextProof(state.events, publication, authority);
+          }, accept: Boolean });
+      } finally { await contextObserver.close(); }
+      if (!contextProof) throw new Error("Kimi context rendezvous result was not delivered");
+      await input.evidence("kimi-context-delivered-proof.json", contextProof);
     }
     await pollUntil({ label: "unanswered actual Kimi Write permission", deadlineAt: input.deadlineAt, intervalMs: 200, load,
       reject: value => ["succeeded", "failed", "cancelled", "timed_out"].includes(value.run.status) ? "Provider ended before actual native Write approval" : undefined,

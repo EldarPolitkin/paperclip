@@ -1,3 +1,4 @@
+import { withoutProvenKimiContext, type KimiContextProof } from "./kimi-context-rendezvous.js";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../../packages/shared/src/portability-hash.js";
 import { hasAcpxNativeOrigin } from "./acpx-native-origin.js";
@@ -6,7 +7,7 @@ import { isValidNativePrpEnvelope } from "./native-event-envelope.js";
 import type { ActiveStopCaller } from "./native-active-stop-evidence.js";
 
 type Row = Record<string, any>;
-export interface KimiLifecycleScope { companyId: string; issueId: string; runId: string; target: string; actionFile?: string }
+export interface KimiLifecycleScope { companyId: string; issueId: string; runId: string; target: string; actionFile?: string; contextProof?: KimiContextProof }
 export interface KimiLifecycleState { run: Row; issue: Row; events: readonly unknown[] }
 export interface KimiLifecyclePending {
   schema: "paperclip.e2e.kimi-native-write-pending.v1"; scope: KimiLifecycleScope;
@@ -22,6 +23,7 @@ const closureTypes = new Set(["runtime_request.resolved", "runtime_request.cance
 function demand(value: unknown, reason: string): asserts value { if (!value) throw new Error(`Kimi native lifecycle: ${reason}`); }
 
 function origin(events: readonly unknown[], scope: KimiLifecycleScope) {
+  events = withoutProvenKimiContext(events, scope.contextProof);
   demand([scope.companyId, scope.issueId, scope.runId, scope.target].every(id) && events.length > 0 && events.length <= 20_000
     && !scope.target.startsWith("/") && !scope.target.split("/").some(part => part === ".." || part === "." || part === ""), "bounded exact scope required");
   const projected = events.map(rec).filter(row => rec(row.payload).prpEvent !== undefined)
@@ -39,6 +41,9 @@ function origin(events: readonly unknown[], scope: KimiLifecycleScope) {
   const created = rows.filter(x => x.event.eventType === "runtime_request.created");
   demand(created.length === 1, "one native Write permission required");
   const card = created[0]!, request = rec(rec(card.event.payload).request);
+  if (scope.contextProof) demand(card.row.seq > scope.contextProof.completedSeq && card.event.turnId === scope.contextProof.turnId
+    && card.event.normalizedSessionId === scope.contextProof.sessionId && card.event.sourceInstanceId === scope.contextProof.sourceInstanceId,
+    "native Write must follow the exact completed scoped context read");
   demand(request.schema === "paperclip.runtime_request.v2" && request.type === "permission" && request.requestKind === "permission_approval" && request.status === "pending"
     && id(request.requestId) && id(request.itemId) && id(request.details?.toolCallId) && request.turnId === card.event.turnId
     && id(card.event.turnId) && id(card.event.normalizedSessionId) && hasAcpxNativeOrigin(request.origin, "kimi", "session/request_permission")

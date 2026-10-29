@@ -104,6 +104,35 @@ separate requirements, including the requested hosted test workspace.
 
 ## Current state
 
+The next shipping prerequisite is now frozen at the existing lock-refresh PR
+[#18185](https://github.com/paperclipai/paperclip/pull/18185), head
+`9600623783d118a79f8008deb9ab05d80715a15a`. Reconciliation is in progress;
+the earlier master freeze below remains historical. The trusted repository
+policy permits lock changes only through its maintained refresh branch or
+Dependabot. This existing prerequisite contains the exact thirteen-line lock
+correction already used by the candidate, with matching reviewed report proof.
+It also inherits three newer master changes, including native finalization and
+the Antigravity builder. Actual foundation merge conflicts make a genuine
+reconciliation necessary. The new behavior and published identity bytes must
+survive; no policy exception, mixed-branch rename, or history-only merge is used.
+
+The builder is one of Kimi's 31 attested source files, so that reconciliation
+requires a new pending identity, expected version11, and a later qualified
+identity, expected version12. No full paid pending10 cell was started. Its
+successful Linux build, zero-prompt native create/load proof, complete exported
+image integrity checks, and controlled Mac native fence remain evidence for
+pending10 only. The exported image is retained without ECR publication. A fresh
+build and all twenty live cells will bind the reconciled candidate. Later
+unrelated master activity alone does not reopen this prerequisite freeze.
+
+The revised remote fixture also passed the actual maintained MCP-to-checkpoint
+boundary and an isolated real PostgreSQL observer check. That check used the
+official encrypted checkpoint loader in a read-only transaction, verified the
+saved checkpoint remained unchanged, and closed the observer before stopping
+its owned database. The integrated observer's bytes match the calibrated source.
+These controls are prerequisites for the first live native Stop case; they do
+not establish authenticated model behavior or full recovery acceptance.
+
 The shipping baseline is now frozen at master `9f3fc2094f61e311b2c5adb4d5beccefc0199943`.
 The reconciled foundation is `7c6cffafa26c70e50c241c71dd536aa79406041d` and
 product code is `60f0bb7b3171e773f21fe80fb524d9130e36500f`, with 97 and 77

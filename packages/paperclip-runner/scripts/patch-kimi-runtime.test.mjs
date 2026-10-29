@@ -274,10 +274,10 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
   const deniedPath = join(workspace, "denied-peer.txt");
   const notificationEnvironment = {
     PAPERCLIP_RUNTIME_NOTIFICATION_CONTEXT: join(root, "controlled-notification-context.json"),
-    PAPERCLIP_RUNTIME_NOTIFICATION_HELPER: join(packageRoot, "dist/bin/paperclip-runnerd"),
+    PAPERCLIP_RUNTIME_NOTIFICATION_HELPER: join(root, "controlled-notification-helper"),
   };
   await writeFile(notificationEnvironment.PAPERCLIP_RUNTIME_NOTIFICATION_CONTEXT, '{"controlledEnvironmentOnly":true}\n', { flag: "wx", mode: 0o600 });
-  await access(notificationEnvironment.PAPERCLIP_RUNTIME_NOTIFICATION_HELPER);
+  await writeFile(notificationEnvironment.PAPERCLIP_RUNTIME_NOTIFICATION_HELPER, "controlled path fixture\n", { flag: "wx", mode: 0o700 });
   const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
   const notificationChecks = Object.entries(notificationEnvironment).map(([key, value]) => `if test "$${key}" != ${shellQuote(value)}; then printf "NOTIFICATION_DISCOVERY_CHANGED"; exit 1; fi; `).join("");
   const bashArguments = { command: 'if test -n "${KIMI_API_KEY+x}"; then printf "PROVIDER_KEY_PRESENT"; exit 1; fi; if test -n "${PAPERCLIP_KIMI_INSTRUCTIONS+x}"; then printf "PRIVATE_BINDING_PRESENT"; exit 1; fi; if test "$PAPERCLIP_TASK_SCOPED" != "assigned-task-canary"; then printf "TASK_VARIABLE_MISSING"; exit 1; fi; ' + notificationChecks + 'printf "KIMI_CHILD_CREDENTIAL_FENCE_OK"', timeout: 5 };
