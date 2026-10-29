@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
+export const MAX_MANUAL_PRIVATE_CELLS = 8;
 export const MANUAL_PRIVATE_PROTOCOL = "paperclip.manual-private-evidence/v1";
 export const MANUAL_PRIVATE_EXECUTIONS = Object.freeze([
   "activity.agent-feedback", "activity.work-timeline", "companies.import-preview",
   "navigation-preferences.dismiss-announcement", "tasks.completion-with-gate",
   "tasks.private-task", "secrets.personal-secret", "agents.choose-primary",
+  "access.invite-teammate", "activity.routine-audit",
 ].map(id => `chat-features.runner-opencode.local.${id}`));
 const sha = /^[0-9a-f]{40}$/;
 const execution = /^[A-Za-z0-9][A-Za-z0-9._-]{0,249}$/;
@@ -18,6 +20,11 @@ export function canonicalManualIds(value: unknown): string[] {
     throw new Error("Invalid exact manual evidence selection");
   return [...value].sort();
 }
+export function canonicalPrivateManualIds(value: unknown): string[] {
+  const ids = canonicalManualIds(value);
+  if (ids.length > MAX_MANUAL_PRIVATE_CELLS) throw new Error("Private manual evidence exceeds the per-run cell limit");
+  return ids;
+}
 export function requiresPrivateManualEvidence(id: string) {
   return id === "chat-features" || id.startsWith("chat-features.");
 }
@@ -27,7 +34,7 @@ export interface ManualRetentionIdentity {
 export function authorizeManualPrivateEvidence(identity: ManualRetentionIdentity, approvalJson: string) {
   if (!sha.test(identity.workflowSha) || !sha.test(identity.targetSha) || !/^[1-9][0-9]{0,19}$/.test(identity.runId) || identity.attempt !== "1")
     throw new Error("Invalid manual private evidence identity");
-  const ids = canonicalManualIds(identity.executionIds);
+  const ids = canonicalPrivateManualIds(identity.executionIds);
   if (ids.some(id => !MANUAL_PRIVATE_EXECUTIONS.includes(id))) throw new Error("Unsupported private manual evidence selection");
   if (Buffer.byteLength(approvalJson) > 65536) throw new Error("Invalid protected manual evidence approval");
   let policy: unknown;
@@ -38,7 +45,7 @@ export function authorizeManualPrivateEvidence(identity: ManualRetentionIdentity
     if (!keys(row, ["workflowSha", "targetSha", "runId", "attempt", "executionIds", "protocol", "launchSha256"]) || !sha.test(String(row.workflowSha))
       || !sha.test(String(row.targetSha)) || !/^[1-9][0-9]{0,19}$/.test(String(row.runId)) || row.attempt !== "1" || row.protocol !== MANUAL_PRIVATE_PROTOCOL || !/^[0-9a-f]{64}$/.test(String(row.launchSha256)))
       throw new Error("Invalid protected manual evidence approval");
-    const selected = canonicalManualIds(row.executionIds);
+    const selected = canonicalPrivateManualIds(row.executionIds);
     return row.workflowSha === identity.workflowSha && row.targetSha === identity.targetSha && row.runId === identity.runId && row.attempt === identity.attempt && selected.join() === ids.join();
   });
   if (matches.length !== 1) throw new Error("Exact protected manual evidence approval missing or ambiguous");
@@ -52,7 +59,7 @@ export function manualCellKind(id: string) {
 export function manualPrivateSessionPolicy(input: { bucket: string; runId: string; executionIds: string[]; mode: "cell-write" | "cell-read" | "report-write" }) {
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(input.bucket) || !/^[1-9][0-9]{0,19}$/.test(input.runId))
     throw new Error("Invalid manual private storage identity");
-  const ids = canonicalManualIds(input.executionIds);
+  const ids = canonicalPrivateManualIds(input.executionIds);
   if (ids.some(id => !MANUAL_PRIVATE_EXECUTIONS.includes(id)) || input.mode !== "report-write" && ids.length !== 1)
     throw new Error("Private archive sessions require one exact cell or the report writer");
   const prefix = `arn:aws:s3:::${input.bucket}/runner-e2e-private/bounded-v1/campaigns/gha-${input.runId}-1/`;

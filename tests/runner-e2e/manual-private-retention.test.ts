@@ -21,7 +21,7 @@ it.each(["workflow", "target", "ids", "protocol", "extra", "duplicate", "empty",
  expect(() => authorizeManualPrivateEvidence(i, JSON.stringify(p))).toThrow();
 });
 it("unknown and mixed manual cases cannot acquire private role authority", () => {
- expect(() => authorizeManualPrivateEvidence({ ...identity, executionIds: ["chat-features.runner-opencode.local.access.invite-teammate"] }, JSON.stringify(approval()))).toThrow();
+ expect(() => authorizeManualPrivateEvidence({ ...identity, executionIds: ["chat-features.runner-opencode.local.onboarding.new-instance"] }, JSON.stringify(approval()))).toThrow();
  expect(() => authorizeManualPrivateEvidence({ ...identity, executionIds: [...identity.executionIds, "runner.native.local.other"] }, JSON.stringify(approval()))).toThrow();
 });
 it("different cells have distinct immutable private object identities", () => {
@@ -36,21 +36,21 @@ it("vetted paid transfer session is put-only and the trusted report reads only s
  expect(reads.Resource).toEqual([`arn:aws:s3:::private-evidence/runner-e2e-private/bounded-v1/campaigns/gha-123-1/${manualCellKind(identity.executionIds[0]!)}.zip`, `arn:aws:s3:::private-evidence/runner-e2e-private/bounded-v1/campaigns/gha-123-1/${manualCellKind(identity.executionIds[0]!)}.zip.upload-receipt.json`]);
  expect(JSON.stringify(report)).not.toContain("gha-124");
 });
-it("all eight target handoff kinds are collision-free and reject arbitrary paths", () => {
+it("all ten target handoff kinds are collision-free and reject arbitrary paths", () => {
  // The target does not import the trusted private-history transfer/parser.
  // Its object-key acceptance remains covered by PR18134's owning tests.
  const kinds = MANUAL_PRIVATE_EXECUTIONS.map(manualCellKind);
- expect(new Set(kinds).size).toBe(8);
+ expect(new Set(kinds).size).toBe(10);
  expect(kinds.every(kind => /^manual-cell-[a-f0-9]{64}$/.test(kind))).toBe(true);
  expect(() => manualCellKind("manual-cell-../escape")).toThrow();
 });
 
 it("keeps the full-eight report inline session policy within STS's 2048-character limit",()=>{
- const policy=manualPrivateSessionPolicy({bucket:"b".repeat(63),runId:"12345678901234567890",executionIds:[...MANUAL_PRIVATE_EXECUTIONS],mode:"report-write"});
+ const policy=manualPrivateSessionPolicy({bucket:"b".repeat(63),runId:"12345678901234567890",executionIds:MANUAL_PRIVATE_EXECUTIONS.slice(2),mode:"report-write"});
  expect(JSON.stringify(policy).length).toBeLessThanOrEqual(2048);
 });
 
-it("all eight exact read/write cell scopes fit STS and never broaden to other cells or wildcards",()=>{
+it("all ten exact read/write cell scopes fit STS and never broaden to other cells or wildcards",()=>{
  for(const id of MANUAL_PRIVATE_EXECUTIONS)for(const mode of ["cell-read","cell-write"]as const){
   const p=manualPrivateSessionPolicy({bucket:"b".repeat(63),runId:"12345678901234567890",executionIds:[id],mode});
   expect(JSON.stringify(p).length).toBeLessThanOrEqual(2048);expect(JSON.stringify(p)).not.toContain("*");

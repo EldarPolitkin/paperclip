@@ -48,10 +48,14 @@ it("retains exact approved private diagnostic bytes without classifying them pub
   stream.write(Buffer.from(cap + "\n")); stream.end(); expect(originals.join("")).toBe(cap + "\n");
   expect(external.join("")).not.toContain(cap); expect(invitationDiagnosticDisposition(s, { failed: stream.failed(), redactedSecret: stream.redactedSecret() }).disposition).toContain("private");
 });
-it("the unchanged trusted eight-case policy rejects invitation even with a matching forged local approval row", () => {
-  expect(MANUAL_PRIVATE_EXECUTIONS).toHaveLength(8); expect(MANUAL_PRIVATE_EXECUTIONS).not.toContain(INVITATION_PRIVATE_EXECUTION);
+it("the enrolled policy recognizes the exact invitation target but still requires its protected identity", () => {
+  expect(MANUAL_PRIVATE_EXECUTIONS).toHaveLength(10); expect(MANUAL_PRIVATE_EXECUTIONS).toContain(INVITATION_PRIVATE_EXECUTION);
   const identity = { workflowSha: "a".repeat(40), targetSha: "b".repeat(40), runId: "123", attempt: "1", executionIds: [INVITATION_PRIVATE_EXECUTION] };
-  expect(() => authorizeManualPrivateEvidence(identity, JSON.stringify({ version: 1, approvals: [{ ...identity, protocol: MANUAL_PRIVATE_PROTOCOL, launchSha256: "c".repeat(64) }] }))).toThrow(/Unsupported/);
+  // Pure local authorization metadata; never an actual operator record or verified preflight.
+  const row = { ...identity, protocol: MANUAL_PRIVATE_PROTOCOL, launchSha256: "c".repeat(64) };
+  expect(authorizeManualPrivateEvidence(identity, JSON.stringify({ version: 1, approvals: [row] })).executionIds).toEqual(identity.executionIds);
+  expect(() => authorizeManualPrivateEvidence(identity, JSON.stringify({ version: 1, approvals: [] }))).toThrow();
+  expect(() => authorizeManualPrivateEvidence({ ...identity, targetSha: "d".repeat(40) }, JSON.stringify({ version: 1, approvals: [row] }))).toThrow();
 });
 it("actual invitation launcher missing preflight stops before host or fixture setup with constant error text", async () => {
   const argv = [...process.argv], exit = process.exitCode, signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
