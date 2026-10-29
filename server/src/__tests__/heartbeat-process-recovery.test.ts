@@ -2419,6 +2419,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           updatedAt: new Date(0),
         }).returning())[0].id }
       : await seedEnvironmentLeaseFixture(fixture);
+    await persistHeartbeatRunProcessMetadata(db, runId, { pid: 2_000_000_000, processGroupId: null,
+      startedAt: new Date(0).toISOString(), targetKind: "local" });
     return { ...fixture, ...lease, complete };
   }
 
