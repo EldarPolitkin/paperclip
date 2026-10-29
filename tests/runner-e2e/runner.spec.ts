@@ -801,7 +801,7 @@ for (const execution of executions) {
       });
     };
 
-    const captureFailureApiState = async () => {
+    const captureApiState = async (capturePhase: "failure" | "final" = "failure") => {
       if (!fixtures) return;
       if (execution.task.flow === "followup_stop_resume") {
         const captured = await captureFollowupStopFailureApiState({ api, companyId: fixtures.company.id,
@@ -878,7 +878,7 @@ for (const execution of executions) {
         snapshotsDir,
         "api-state.json",
         {
-          capturePhase: "failure",
+          capturePhase,
           issue: currentIssue,
           runs: detailedRuns,
           comments,
@@ -1207,6 +1207,8 @@ for (const execution of executions) {
         });
         issue = story.issue as IssueRecord; selectedRuns = story.runs as RunRecord[];
         matcherResults = story.checks.map(check => ({ matcher: { kind: "json_path" as const, path: `cursorCloud.${check.id}`, expected: true }, passed: check.passed, detail: check.detail }));
+        await captureApiState("final");
+        await captureScreenshot("final-state", "Final visible task state", "final-state.png");
       } else if (execution.task.flow === "native_active_stop") {
         const story = await (execution.profile.qualificationCandidate === "copilot" ? runCopilotActiveStopFlow : runNativeActiveStopFlow)({
           page, api, fixtures, execution: execution.profile.qualificationCandidate === "copilot" && execution.task.id === "pending-permission-stop" ? { ...execution, task: copilotActiveStopTasks[0]! } : execution, nonce, workspacePath, deadlineAt: startedAtMs + deadlineMs,
@@ -3129,7 +3131,7 @@ for (const execution of executions) {
         failureClassOverride = "permanent_infrastructure";
       }
       try {
-        await captureFailureApiState();
+        await captureApiState();
       } catch (captureError) {
         const failureClass = classifyFailure(captureError);
         if (failureClass === "secret_leak") {
