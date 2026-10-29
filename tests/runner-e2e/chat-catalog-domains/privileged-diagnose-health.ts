@@ -9,8 +9,17 @@ export function diagnosticContext(targetUrl: string, controllerUrl: string) {
     description: `Diagnostic subject: ${targetUrl}. This conversation's subject is that owned instance; the chat controller is ${controllerUrl}.` };
 }
 export function supportedDiagnosticOperator(reply: string, targetUrl: string) {
-  return reply.split(/[.!?]\s+|;|\n/).some(clause => /doctor/i.test(clause) && /operator|human|you|terminal/i.test(clause)
-    && /\b(?:run|use|execute|check)\b/i.test(clause) && !/\b(?:do not|don't|never)\b/i.test(clause) && clause.includes(targetUrl));
+  let targetOrigin: string;
+  try { targetOrigin = new URL(targetUrl).origin; } catch { return false; }
+  let subjectKnown = false;
+  for (const clause of reply.split(/(?<=[.!?])\s+|;|\n/)) {
+    const origins = [...clause.matchAll(/https?:\/\/[^\s<>()]+/g)].map(m => { try { return new URL(m[0].replace(/[.,!?]+$/, "")).origin; } catch { return "unknown"; } });
+    if (origins.length) subjectKnown = origins.every(origin => origin === targetOrigin);
+    const subject = subjectKnown && (origins.length > 0 || /\b(?:that|this|owned|diagnostic) (?:target|instance)\b/i.test(clause));
+    if (subject && /\b(?:operator|human|you)\b/i.test(clause) && /\b(?:run|use|execute|check)\b[\s\S]*\bdoctor\b/i.test(clause)
+      && !/\b(?:do not|don't|never|cannot|can't|unable to|won't)\b/i.test(clause) && !clause.trim().endsWith("?")) return true;
+  }
+  return false;
 }
 export function gradeDiagnoseHealth(value: unknown) {
   const c = checks(), o = privilegedObservation(value);

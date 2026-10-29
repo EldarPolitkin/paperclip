@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { ownedPostmasterStillMatches } from "./privileged-database-fault.js";
-import { gradeDiagnoseHealth } from "./privileged-diagnose-health.js";
+import { gradeDiagnoseHealth, supportedDiagnosticOperator } from "./privileged-diagnose-health.js";
 it("refuses a reused PID, wrong UID/port/directory or a substring lookalike process before control", () => {
   const original = { pid: 123, startedAt: "1000", directory: "/owned/db", port: 54329, uid: 501, binary: "/pinned/bin/postgres",
     marker: ["123", "/owned/db", "1000", "54329"], processRow: "501 /pinned/bin/postgres -D /owned/db -p 54329" };
@@ -33,4 +33,12 @@ it("rejects generic prose, fixture-only observation, wrong target, missing visib
   expect(gradeDiagnoseHealth({ ...o, runs: [] }).passed).toBe(false);
   expect(gradeDiagnoseHealth({ ...o, humanQueries: ["different"] }).passed).toBe(false);
   expect(gradeDiagnoseHealth({ ...o, projects: [{ id: "target-project", companyId: "foreign", description }] }).passed).toBe(false);
+});
+
+it("accepts context-bound multiline operator guidance but never self-inability or another subject", () => {
+  expect(supportedDiagnosticOperator(`The diagnostic target is ${targetUrl}.\nAn operator can run paperclipai doctor for that instance in a terminal.`, targetUrl)).toBe(true);
+  expect(supportedDiagnosticOperator(`I run doctor for ${targetUrl} in a terminal.`, targetUrl)).toBe(false);
+  expect(supportedDiagnosticOperator(`I cannot run doctor for your ${targetUrl}.`, targetUrl)).toBe(false);
+  expect(supportedDiagnosticOperator(`Target ${targetUrl}.\nAn operator can run doctor for http://other.invalid in a terminal.`, targetUrl)).toBe(false);
+  expect(supportedDiagnosticOperator(`Target ${targetUrl}.\nCould an operator run doctor for that instance?`, targetUrl)).toBe(false);
 });

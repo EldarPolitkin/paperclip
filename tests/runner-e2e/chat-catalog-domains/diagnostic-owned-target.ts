@@ -76,7 +76,11 @@ export async function diagnosticActionEvidence(ctx: ChatCatalogContext, runId: s
   const events = await collectRunEvents<{ seq?: number; payload?: { prpEvent?: Record<string, unknown> } }>((afterSeq, limit) => ctx.input.api.get(`/api/heartbeat-runs/${run.id}/events?afterSeq=${afterSeq}&limit=${limit}`));
   const b = currentNativeCaller(run, events, { companyId: ctx.input.fixtures.company.id, agentId: ctx.input.fixtures.agent.id, issueId: ctx.issue()!.id }); if (!b) return false;
   let rows: PeerObservation[]; try { const raw = await readFile(o.output, "utf8"); if (raw.length > 262144) return false; rows = JSON.parse(raw); } catch { return false; }
-  return Array.isArray(rows) && rows.length <= 16 && rows.some(row => nativeHealthResponse(row, b, o.target!));
+  if (!validDiagnosticObservations(rows)) throw new Error("Owned diagnostic observer returned unsupported evidence");
+  const accepted = rows.some(row => nativeHealthResponse(row, b, o.target!));
+  await ctx.input.evidence("chat-catalog-diagnostic-native-caller.json", { runId: run.id, issueId: ctx.issue()!.id, companyId: run.companyId, agentId: run.agentId,
+    target: o.target, nativeBinding: b, observations: rows, accepted });
+  return accepted;
 }
 export async function operatorDiagnosticCheck(ctx: ChatCatalogContext) {
   remainingDiagnosticBudget(ctx); const result = await owned.get(ctx)!.fault!.doctor(); return result.status === "fail" && result.connectionFailure;
@@ -88,10 +92,25 @@ async function assertEmptyDiagnosticTarget(connection: string) {
     if (rows.length !== 1 || !emptyDiagnosticInventory(rows[0]!)) throw new Error("Diagnostic target contains unexpected agent or inference work");
   } finally { await db.end({ timeout: 5 }); }
 }
+export function validDiagnosticObservations(value: unknown): value is PeerObservation[] {
+  const keys = (v: object, names: string[]) => Object.keys(v).sort().join() === names.sort().join();
+  const validProcess = (v: any) => v && typeof v === "object" && keys(v, ["pid", "parent", "uid", "ticks", "born", "namespace"])
+    && Number.isSafeInteger(v.pid) && v.pid > 1 && Number.isSafeInteger(v.parent) && v.parent >= 0 && Number.isSafeInteger(v.uid) && v.uid >= 0
+    && typeof v.ticks === "string" && /^\d+$/.test(v.ticks) && typeof v.namespace === "string" && /^net:\[\d+\]$/.test(v.namespace)
+    && typeof v.born === "string" && Number.isFinite(Date.parse(v.born)) && new Date(v.born).toISOString() === v.born;
+  return Array.isArray(value) && value.length <= 16 && value.every(v => v && typeof v === "object" && keys(v, ["target", "chain", "finished", "status", "unknown"])
+    && validProcess(v.target) && Array.isArray(v.chain) && v.chain.length <= 64 && v.chain.every(validProcess) && typeof v.finished === "boolean" && typeof v.unknown === "boolean"
+    && (v.status === null || Number.isInteger(v.status) && v.status >= 100 && v.status <= 599));
+}
+export async function drainDiagnosticTarget(recover: () => Promise<unknown>, stop: () => Promise<unknown>) {
+  let failure: unknown;
+  try { await recover(); } catch (error) { failure = error; }
+  try { await stop(); } catch (error) { if (failure) throw new AggregateError([failure, error], "Owned diagnostic recovery and stop failed"); throw error; }
+  if (failure) throw failure;
+}
 export async function cleanupDiagnosticTarget(ctx: ChatCatalogContext) {
   const o = owned.get(ctx); if (!o) return;
-  await o.fault?.recover();
-  try { if (o.connection) await assertEmptyDiagnosticTarget(o.connection); } finally { await stopOwnedDev(o.dev); }
+  await drainDiagnosticTarget(async () => { await o.fault?.recover(); if (o.connection) await assertEmptyDiagnosticTarget(o.connection); }, () => stopOwnedDev(o.dev));
   if (o.dev.config && await readFile(o.dev.config).then(() => true, () => false)) await ownedDevCommand(o.dev, ["worktree:cleanup", o.dev.instance, "--instance", o.dev.instance, "--home", o.dev.home]);
   const root = await realpath(process.env.PAPERCLIP_RUNNER_E2E_TEMP_ROOT!), directory = await realpath(o.dev.root);
   if (!directory.startsWith(root + path.sep) || !path.basename(directory).startsWith("operator-dev-")) throw new Error("Refusing foreign diagnostic cleanup");
