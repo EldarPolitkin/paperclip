@@ -110,6 +110,32 @@ const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 interface Owned { child: ChildProcess; identity: ProcessScalar; messages: unknown[] }
 const directChildren = new Set<ChildProcess>();
 const privateRoots = new Set<string>();
+function cleanupCustody<T>() {
+  const pendingProviders = new Map<T, string>(), retainedRoots = new Set<string>();
+  return {
+    pending(provider: T, root: string) { pendingProviders.set(provider, root); },
+    drained(provider: T) { pendingProviders.delete(provider); },
+    retain(root: string) { retainedRoots.add(root); },
+    canStop(provider: T) { return !pendingProviders.has(provider); },
+    canRemove(root: string) { return !retainedRoots.has(root) && ![...pendingProviders.values()].includes(root); },
+    unresolved() { return pendingProviders.size > 0 || retainedRoots.size > 0; },
+  };
+}
+const persistentCustody = cleanupCustody<ChildProcess>();
+async function finishOwnedCleanup<T>(custody: ReturnType<typeof cleanupCustody<T>>, children: Set<T>, roots: Set<string>, stop: (child: T) => Promise<void>, remove: (root: string) => Promise<void>, unknown = false) {
+  for (const child of [...children]) {
+    if (!custody.canStop(child)) { unknown = true; continue; }
+    try { await stop(child); } catch { unknown = true; }
+  }
+  if (unknown || custody.unresolved()) {
+    for (const root of roots) custody.retain(root);
+    throw new Error("Owned cleanup remains unknown; private calibration metadata retained");
+  }
+  for (const root of [...roots]) {
+    if (!custody.canRemove(root)) throw new Error("Owned root remains protected by unresolved cleanup");
+    try { await remove(root); roots.delete(root); } catch { custody.retain(root); throw new Error("Owned root cleanup remains unknown; metadata retained"); }
+  }
+}
 async function stopHandle(child: ChildProcess) {
   requireRemote();
   if (!directChildren.has(child) || child.exitCode !== null || child.signalCode !== null) return;
@@ -249,31 +275,25 @@ async function providerDisconnected(owned: Owned) {
 }
 afterEach(async () => {
   if (!eligible) return;
-  let unknownCleanup = false; const awaitingDrain = new Set<ChildProcess>();
+  let unknownCleanup = false;
   for (const f of ownedFixtures.splice(0).reverse()) {
     // Closed counters only, before any removal, including failed capture/cleanup.
     console.info("OBSERVER_CALIBRATION_DIAGNOSTIC " + JSON.stringify(await diagnosticSnapshot(f.output)));
     for (const p of f.providers) {
-      awaitingDrain.add(p.child);
+      persistentCustody.pending(p.child, f.root);
       try {
         await confirmProviderDrain({ connected: () => p.child.connected, request: () => { p.child.send({ kind: "close" }); },
           receipt: () => message(p, "children-empty"), disconnect: () => providerDisconnected(p) });
-        awaitingDrain.delete(p.child);
+        persistentCustody.drained(p.child);
       } catch { unknownCleanup = true; }
     }
     try { if (f.target.child.connected) f.target.child.send({ kind: "close" }); } catch { /* Exact target cleanup follows. */ }
-    for (const p of [...f.clients, ...f.providers.filter(p => !awaitingDrain.has(p.child)).map(p => p.identity), f.target.identity]) {
+    for (const p of [...f.clients, ...f.providers.filter(p => persistentCustody.canStop(p.child)).map(p => p.identity), f.target.identity]) {
       try { await stopExact(p, f.ticks); } catch { unknownCleanup = true; }
     }
   }
-  for (const child of [...directChildren]) {
-    // Never kill a provider before it has accounted for every actual child.
-    if (awaitingDrain.has(child)) continue;
-    try { await stopHandle(child); } catch { unknownCleanup = true; }
-  }
-  if (unknownCleanup) throw new Error("Owned cleanup remains unknown; private calibration metadata retained");
-  for (const root of privateRoots) await rm(root, { recursive: true, force: true });
-  privateRoots.clear();
+  await finishOwnedCleanup(persistentCustody, directChildren, privateRoots, stopHandle,
+    root => rm(root, { recursive: true, force: true }), unknownCleanup);
 });
 
 describe.runIf(eligible)("remote-only Node24 Linux AWS observer qualification (helper calibration, not Product E2E)", () => {
@@ -339,4 +359,24 @@ it("pure parent drain gate cannot admit termination on missing/unknown receipt o
   let connected = true, requests = 0;
   await confirmProviderDrain({ connected: () => connected, request: () => { requests++; }, receipt: async () => ({ kind: "children-empty" }), disconnect: async () => { connected = false; } });
   expect(requests).toBe(1);
+});
+
+it("pure two-hook custody never kills an earlier unconfirmed provider or removes its retained root", async () => {
+  const custody = cleanupCustody<object>(), old = {}, next = {}, children = new Set([old]), roots = new Set(["owned-first"]);
+  const stopped: object[] = [], removed: string[] = [];
+  const stop = async (child: object) => { stopped.push(child); children.delete(child); }, remove = async (root: string) => { removed.push(root); };
+  custody.pending(old, "owned-first");
+  await expect(finishOwnedCleanup(custody, children, roots, stop, remove)).rejects.toThrow("Owned cleanup remains unknown");
+  expect(stopped).toEqual([]); expect(removed).toEqual([]);
+  // A later hook has a new fixture; the old fixture is no longer in its local list.
+  children.add(next); roots.add("owned-next"); custody.pending(next, "owned-next"); custody.drained(next);
+  await expect(finishOwnedCleanup(custody, children, roots, stop, remove)).rejects.toThrow("Owned cleanup remains unknown");
+  expect(stopped).toEqual([next]); expect(children.has(old)).toBe(true); expect(removed).toEqual([]);
+  expect(roots.has("owned-first")).toBe(true); expect(custody.canStop(old)).toBe(false); expect(custody.canRemove("owned-first")).toBe(false);
+});
+it("pure fully drained custody permits only its known handles and owned root cleanup", async () => {
+  const custody = cleanupCustody<object>(), child = {}, children = new Set([child]), roots = new Set(["owned"]), removed: string[] = [];
+  custody.pending(child, "owned"); custody.drained(child);
+  await finishOwnedCleanup(custody, children, roots, async c => { children.delete(c); }, async root => { removed.push(root); });
+  expect(children.size).toBe(0); expect(roots.size).toBe(0); expect(removed).toEqual(["owned"]);
 });
