@@ -100,3 +100,32 @@ it("actual launcher call expressions retain the selected tuple and all three pha
  }
  expect(f.fingerprint).toHaveBeenCalledTimes(1);
 });
+it.each(["missing-receipt", "verified-selection", "expired-post-setup"] as const)("actual main stops at the safe %s boundary", async mode => {
+ const f = await fixture(), calls: string[] = [], argv = process.argv, exit = process.exitCode;
+ const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const, listeners = new Map(signals.map(signal => [signal, process.listeners(signal)]));
+ vi.doMock("./manual-private-handoff.js", async original => ({ ...await original<typeof import("./manual-private-handoff.js")>(), readManualPrivateHandoff: async () => f.context, sealManualResultEvidence: async () => { calls.push("finalize"); } }));
+ vi.doMock("./steering-pi-target-admission.js", async original => {
+  const actual = await original<typeof import("./steering-pi-target-admission.js")>();
+  return { ...actual, admitSteeringPiTarget: (input: Parameters<typeof actual.admitSteeringPiTarget>[0]) => actual.admitSteeringPiTarget(input, {
+   now: f.now, readReceipt: async () => { calls.push("receipt"); if (mode === "missing-receipt") throw new Error("SYNTHETIC_MISSING_RECEIPT"); return f.receipt as Awaited<ReturnType<typeof import("./steering-pi-receipt.js").readSteeringPiReceipt>>; },
+   verifyBundle: async () => { calls.push("bundle"); },
+  }) };
+ });
+ vi.doMock("./chat-remote-host.js", () => ({ prepareChatRemoteHost: async () => { calls.push("host"); if (mode === "verified-selection") throw new Error("SYNTHETIC_HOST_STOP"); return undefined; } }));
+ vi.doMock("./chat-catalog-fingerprint.js", async original => ({ ...await original<typeof import("./chat-catalog-fingerprint.js")>(), chatCatalogCaseFingerprint: () => { calls.push("fingerprint"); f.advance(STEERING_PI_JOB_MS); return f.fingerprint(); } }));
+ vi.stubEnv("PAPERCLIP_E2E_CAMPAIGN_ID", "synthetic-steering-main"); vi.stubEnv("PAPERCLIP_E2E_OPERATIONS_MANIFEST", ""); vi.stubEnv("RUNNER_NAME", "owned-runner");
+ vi.stubGlobal("fetch", () => { throw new Error("Network forbidden in main boundary controls"); });
+ vi.spyOn(console, "log").mockImplementation(() => {}); const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+ try {
+  vi.resetModules(); process.argv = [process.execPath, "/synthetic/launch.ts", "--id", STEERING_PI_EXECUTION]; process.exitCode = undefined;
+  await import("./launch.js"); expect(process.exitCode).toBe(1);
+  if (mode === "missing-receipt") { expect(calls).toEqual(["receipt", "finalize"]); expect(errors).toHaveBeenCalledWith("SYNTHETIC_MISSING_RECEIPT"); }
+  if (mode === "verified-selection") { expect(calls).toEqual(["receipt", "bundle", "host", "finalize"]); expect(errors).toHaveBeenCalledWith("SYNTHETIC_HOST_STOP"); }
+  if (mode === "expired-post-setup") { expect(calls).toEqual(["receipt", "bundle", "host", "fingerprint", "receipt", "bundle", "finalize"]); expect(errors).toHaveBeenCalledWith("Insufficient time for the unchanged steering case and cleanup"); }
+ } finally {
+  process.argv = argv; process.exitCode = exit;
+  for (const signal of signals) for (const listener of process.listeners(signal)) if (!listeners.get(signal)!.includes(listener)) process.removeListener(signal, listener);
+  for (const module of ["./manual-private-handoff.js", "./steering-pi-target-admission.js", "./chat-remote-host.js", "./chat-catalog-fingerprint.js"]) vi.doUnmock(module);
+  vi.unstubAllEnvs(); vi.unstubAllGlobals();
+ }
+});
