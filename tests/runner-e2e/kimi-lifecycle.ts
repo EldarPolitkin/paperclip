@@ -1,4 +1,5 @@
 import { kimiContextRendezvousPrompt, pendingKimiContextPermission, publishKimiContextContinuation, approveKimiContextThroughUi, readKimiContextProof, type KimiContextProof } from "./kimi-context-rendezvous.js";
+import { kimiPendingWritePermissionCard } from "./kimi-permission-card.js";
 import { createKimiContextCheckpointObserver } from "./kimi-context-checkpoint.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -146,14 +147,14 @@ export async function runKimiLifecycleFlow(input: {
       if (!contextProof) throw new Error("Kimi context rendezvous result was not delivered");
       await input.evidence("kimi-context-delivered-proof.json", contextProof);
     }
-    await pollUntil({ label: "unanswered actual Kimi Write permission", deadlineAt: input.deadlineAt, intervalMs: 200, load,
+    const pendingState = await pollUntil({ label: "unanswered actual Kimi Write permission", deadlineAt: input.deadlineAt, intervalMs: 200, load,
       reject: value => ["succeeded", "failed", "cancelled", "timed_out"].includes(value.run.status) ? "Provider ended before actual native Write approval" : undefined,
       accept: value => { observeKimiLifecyclePending({ ...value, scope: scope() }); return true; } });
     await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
-    const card = page.getByTestId("task-chat-runtime-request").filter({ visible: true });
-    await expect(card).toHaveCount(1); await expect(card.getByText(`Change file: ${target}`, { exact: true })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
-    await expect(card.getByRole("button", { name: "Allow once", exact: true })).toBeEnabled();
+    const card = await kimiPendingWritePermissionCard({ page,
+      pending: observeKimiLifecyclePending({ ...pendingState, scope: scope() }),
+      readPending: async () => observeKimiLifecyclePending({ ...await load(), scope: scope() }),
+    });
     await input.capture("kimi-native-write-pending", "Actual native Kimi Write permission remains unanswered", "tool-review-pending.png");
     if (remote) {
       pendingSnapshot = await fixture!.snapshot("pending-native-write");
