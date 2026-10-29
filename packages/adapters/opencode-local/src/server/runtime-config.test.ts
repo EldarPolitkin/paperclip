@@ -58,7 +58,7 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     expect(hookEnv.parent).toBeNull();
     expect(hookEnv.child.BASH_ENV).toContain(relocated);
     const command = spawnSync("bash", ["-c", 'printf "%s" "$1"; exit 7', "bash", "literal ' $() value"], {
-      env: { ...process.env, ...hookEnv.child }, encoding: "utf8",
+      env: { ...process.env, ...hookEnv.child }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
     });
     expect(command.stdout).toBe("literal ' $() value");
     expect(command.status).toBe(7);
