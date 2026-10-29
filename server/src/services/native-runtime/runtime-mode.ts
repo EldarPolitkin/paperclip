@@ -105,7 +105,7 @@ export function resolveNativeRuntimeMode(input: {
   grokEnabled?: boolean;
   runtimeConfig: unknown;
   adapterConfig?: unknown;
-  agent: { id?: string; status: string; adapterType: string | null };
+  agent: { id?: string; companyId?: string; status: string; adapterType: string | null };
   issue: { id: string; workMode: string; executionWorkspaceId?: string | null } | null;
   target: { kind?: string } | null | undefined;
   workspaceId: string | null;
@@ -124,7 +124,7 @@ export function resolveNativeRuntimeMode(input: {
   }
   let runnerProfile: PaperclipRunnerProviderProfile;
   try {
-    runnerProfile = resolvePaperclipRunnerProviderProfile(input.adapterConfig);
+    runnerProfile = resolvePaperclipRunnerProviderProfile(input.adapterConfig, { companyId: input.agent.companyId });
   } catch (error) {
     if (error instanceof PaperclipRunnerProviderProfileError) {
       throw ineligible(error.code, error.message);
@@ -141,7 +141,7 @@ export function resolveNativeRuntimeMode(input: {
     throw ineligible("paperclip_runner_grok_disabled", "Enable Grok Bot, Paperclip Runner, and Assistant connections (MCP) before assigning new work.");
   } else if (runnerProfile.provider !== "codex" && runnerProfile.provider !== "opencode"
     && !(runnerProfile.provider === "acpx"
-      && (["claude", "copilot", "pi"].includes(runnerProfile.acpxAgent ?? "")))
+      && (["claude", "copilot", "pi", "antigravity"].includes(runnerProfile.acpxAgent ?? "")))
     && !input.enabled) {
     throw ineligible(
       "paperclip_runner_rollout_disabled",
@@ -297,7 +297,7 @@ export function resolveHeartbeatNativeRuntimeMode(input: {
   grokEnabled?: boolean;
   runtimeConfig: unknown;
   adapterConfig?: unknown;
-  agent: { id?: string; status: string; adapterType: string | null };
+  agent: { id?: string; companyId?: string; status: string; adapterType: string | null };
   issue: { id: string; workMode: string; executionWorkspaceId?: string | null } | null;
   target: { kind?: string } | null | undefined;
   workspaceId: string | null;

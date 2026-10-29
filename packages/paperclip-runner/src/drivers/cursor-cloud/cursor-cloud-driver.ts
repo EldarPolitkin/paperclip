@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,7 +9,7 @@ import type { NativeUserMessage } from "../../contracts/types.js";
 import { CURSOR_CLOUD_CANCEL_TIMEOUT_MS, CURSOR_CLOUD_DEFAULT_TIMEOUT_MS } from "../../contracts/cursor-cloud.js";
 import { PRP_BLOCK_TOOL_NAME, PRP_COMPLETION_TOOL_NAME } from "../../contracts/completion-result.js";
 import type { PrpEvent } from "../../protocol/replay-contract.js";
-import { startRunnerToolBridge, type RunnerToolBridge, type RunnerToolCall } from "../runner-tool-bridge.js";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER, startRunnerToolBridge, type RunnerToolBridge, type RunnerToolCall } from "../runner-tool-bridge.js";
 import { semanticCanonicalJson } from "../semantic-tool-receipt.js";
 import { CursorCloudClient, CursorCloudClientError, isCursorCloudRunActive, type CursorCloudModelRef, type CursorCloudRun, type CursorCloudSseEvent } from "./cloud-client.js";
 import { CURSOR_CLOUD_MCP_SERVER_NAME, parseNativeCursorCloudConfig, parseCursorCloudBinding, type NativeCursorCloudConfig, type CursorCloudBinding } from "./config.js";
@@ -188,6 +188,7 @@ class CursorCloudSession implements CursorCloudSessionHandle {
       : tool), { name: "list_cursor_cloud_artifacts", description: "List files exposed by the current Cursor Cloud Agent artifact API. Use the exact returned relative path in register_deliverable contentRef cursor-artifact:<path>. This read-only provider helper does not register a deliverable.", inputSchema: { type: "object", properties: {}, additionalProperties: false } }];
     this.#bridge = await startRunnerToolBridge({ socketPath: this.#options.relay.socketPath, secret: this.#options.relay.token, tools, preserveToolNames: true, timeoutMs: null,
       sessionScope: () => this.#closed || this.#stopping || !active(this.#cp) ? null : this.#cp.turnId,
+      scopeToken: () => this.#closed || this.#stopping || !active(this.#cp) ? null : this.#cp.relayTurnToken ?? null,
       handler: call => this.#dispatch(call) });
     const socket = await lstat(this.#options.relay.socketPath);
     if (!socket.isSocket() || socket.isSymbolicLink() || (process.getuid && socket.uid !== process.getuid())) throw new Error("Cursor Cloud bound relay socket ownership is unsafe");
@@ -221,11 +222,12 @@ class CursorCloudSession implements CursorCloudSessionHandle {
     if (this.#options.relay.expiresAt <= Date.now()) throw new Error("Cursor Cloud semantic relay capability expired; only recovery cleanup is permitted");
     if (!input.message.text.trim() || Buffer.byteLength(input.message.text) > 1_048_576) throw new Error("Cursor Cloud turn text is empty or exceeds its bound");
     const turnId = `turn-${randomUUID()}`;
+    const relayTurnToken = randomBytes(32).toString("base64url");
     const first = this.#cp.agentId === null;
     const prompt = `${first || this.#cp.instructionsRevisionPending ? this.#instructions : CURSOR_CLOUD_CONTROL_INSTRUCTIONS}\n\nPaperclip task:\n${input.message.text}`;
     const request = { prompt: { text: prompt }, model: { id: this.#options.model, ...(this.#options.modelParams ? { params: this.#options.modelParams } : {}) }, mode: "agent" as const,
-      mcpServers: [{ name: CURSOR_CLOUD_MCP_SERVER_NAME, type: "http" as const, url: this.#options.relay.url, headers: { Authorization: `Bearer ${this.#options.relay.token}` } }] };
-    this.#cp.turnId = turnId; this.#cp.runId = null; this.#cp.phase = "creating"; this.#cp.pendingOperation = first ? "create_agent" : "create_run";
+      mcpServers: [{ name: CURSOR_CLOUD_MCP_SERVER_NAME, type: "http" as const, url: this.#options.relay.url, headers: { Authorization: `Bearer ${this.#options.relay.token}`, [RUNNER_TOOL_SCOPE_TOKEN_HEADER]: `Bearer ${relayTurnToken}` } }] };
+    this.#cp.turnId = turnId; this.#cp.relayTurnToken = relayTurnToken; this.#cp.runId = null; this.#cp.phase = "creating"; this.#cp.pendingOperation = first ? "create_agent" : "create_run";
     this.#cp.requestedAgentId = first ? `bc-${randomUUID()}` : null; this.#cp.idempotencyKey = `paperclip-${randomUUID()}`;
     this.#cp.requestDigest = cursorCloudDigest(semanticCanonicalJson(request)); this.#cp.lastEventId = null; this.#cp.lastEventFingerprints = []; this.#cp.terminalStatus = null; this.#cp.acceptedCompletion = null; this.#cp.pendingTerminalDelivery = null;
     this.#cp.deadlineAt = Date.now() + (this.#options.config.timeoutMs ?? CURSOR_CLOUD_DEFAULT_TIMEOUT_MS);
@@ -364,7 +366,8 @@ class CursorCloudSession implements CursorCloudSessionHandle {
     return null;
   }
   async #observe(authority: RemoteAuthority): Promise<void> {
-    for (let attempt = 0; attempt < 4 && this.#currentRemote(authority) && !this.#stopping; attempt += 1) {
+    for (let attempt = 0; this.#currentRemote(authority) && !this.#stopping; attempt += 1) {
+      if (this.#cp.deadlineAt === null || this.#cp.deadlineAt <= Date.now()) return;
       const streamAbort = new AbortController(); this.#streamAbort = streamAbort;
       try {
         for await (const event of this.#client.streamRun(authority.agentId, authority.runId, { signal: streamAbort.signal, ...(this.#cp.lastEventId ? { lastEventId: this.#cp.lastEventId } : {}) })) {
@@ -375,14 +378,15 @@ class CursorCloudSession implements CursorCloudSessionHandle {
       } catch (error) {
         if (!this.#currentRemote(authority) || this.#stopping || streamAbort.signal.aborted) return;
         if (error instanceof CursorCloudClientError && error.status === 410) this.#emit("harness.diagnostic", { code: "cursor_cloud_stream_expired", message: "Cursor Cloud stream retention expired; reconciling saved run state." });
-        else if (attempt === 3) throw error;
+        else if (!(error instanceof CursorCloudClientError && error.retryable)) throw error;
       }
       if (!this.#currentRemote(authority) || this.#stopping || streamAbort.signal.aborted) return;
       const run = await this.#readObservedRun(authority, streamAbort.signal);
       if (!run || !this.#acceptRun(authority, run) || this.#stopping || streamAbort.signal.aborted) return;
       if (!isCursorCloudRunActive(run.status)) { await this.#settle(authority, run); return; }
-      if (attempt === 3) throw new HarnessReconciliationError("Cursor Cloud stream ended while remote work remains active");
-      await delay(boundedPositive(this.#options.reconnectDelayMs, Math.min(250 * 2 ** attempt, 2_000)), undefined, { signal: streamAbort.signal });
+      const remaining = (this.#cp.deadlineAt ?? 0) - Date.now();
+      if (remaining <= 0) return;
+      await delay(Math.min(remaining, boundedPositive(this.#options.reconnectDelayMs, Math.min(250 * 2 ** Math.min(attempt, 4), 2_000))), undefined, { signal: streamAbort.signal });
     }
   }
   async #consume(event: CursorCloudSseEvent): Promise<void> {
@@ -476,7 +480,7 @@ class CursorCloudSession implements CursorCloudSessionHandle {
     return this.#redactUnbounded(text).slice(0, 65_536);
   }
   #redactUnbounded(text: string): string {
-    for (const secret of [this.#options.environment?.CURSOR_API_KEY, this.#options.relay.token]) if (secret) text = text.replaceAll(secret, "[redacted]");
+    for (const secret of [this.#options.environment?.CURSOR_API_KEY, this.#options.relay.token, this.#cp.relayTurnToken]) if (secret) text = text.replaceAll(secret, "[redacted]");
     return text;
   }
   #redactJson(value: unknown): unknown {

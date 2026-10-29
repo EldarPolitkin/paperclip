@@ -257,6 +257,12 @@ Cloud run and requires a terminal provider receipt. Unknown cancellation remains
 unconfirmed. Recovery reuses the saved Agent/Run and stream cursor, keeps the
 original deadline, and does not replay an ambiguous paid mutation.
 
+Tool callbacks require the capability of the current turn, including fresh MCP
+initialization. Recovery retains that capability in the private checkpoint.
+Older active checkpoints without it permit cleanup, but cannot resume tool
+access. Read-only observation retries transient stream failures within the
+original deadline, with bounded backoff.
+
 Checkpoint acquisition and dead-owner takeover share a private, bounded local
 acquisition guard; no network work runs while it is held. Ordinary dead main-owner
 recovery remains automatic when that guard is absent. An abandoned or
