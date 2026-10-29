@@ -268,8 +268,11 @@ byte count and SHA-256. Runner downloads the provider artifact to its private
 artifact root before normal deliverable registration. Fully verified bytes publish
 atomically without replacing an existing final file; existing files must match the
 claim. A crashed writer can leave an unreferenced private temporary file, which is
-retained rather than mistaken for a completed artifact. A remote path never grants
-access to the controller's project files. See the
+retained rather than mistaken for a completed artifact. A completed publication
+alias is removed only for a proven inactive publisher and the exact verified
+private final inode. Active or unknown aliases remain fenced; successful handoff
+requires a single final link. A remote path never grants access to the controller's
+project files. See the
 [local qualification record](../../doc/plans/2026-10-28-cursor-cloud-native-runner.md)
 for runnable acceptance cells and the remaining live qualification gates.
 
