@@ -100,7 +100,7 @@ export async function runChatCatalogFlow(context: ChatCatalogContext) {
       deadlineAt: Math.min(deadlineAt, Date.now() + 45_000), intervalMs: 500,
       load: () => input.api.get<{ lifecycleState: string; status: string; lifecycleError?: string }>(`/api/agents/${agent.id}`),
       accept: chatCatalogAgentIsReady,
-      reject: value => value.lifecycleError ? "Agent setup failed; diagnostic details withheld" : undefined,
+      reject: value => value.lifecycleError && !(value.lifecycleState === "verifying" && value.status === "paused") ? "Agent setup failed; diagnostic details withheld" : undefined,
     });
     const scopes = [{ scopeType: "company", scopeId: input.fixtures.company.id },
       ...agents.map(agent => ({ scopeType: "agent", scopeId: agent.id }))];
