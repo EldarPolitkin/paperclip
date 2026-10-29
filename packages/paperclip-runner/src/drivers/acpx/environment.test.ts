@@ -6,6 +6,14 @@ afterEach(() => vi.unstubAllEnvs());
 import { ACPX_CREDENTIAL_BINDING_ENV, createAcpxCredentialBinding, createAcpxSidecarHostEnvironment, createSanitizedAcpxSpawnInput } from "./environment.js";
 
 describe("ACPX launch environment", () => {
+  it("rejects task shell selectors without a controller-owned helper projection", () => {
+    const selectors = { BASH_ENV: "/workspace/hook.sh", ZDOTDIR: "/workspace", GH_CONFIG_DIR: "/workspace/gh" };
+    expect(createSanitizedAcpxSpawnInput(selectors, "claude").env).toEqual({});
+    for (const [key, value] of Object.entries(selectors)) {
+      expect(configuredEnvironmentProjection({[key]: value})).not.toHaveProperty(key);
+      expect(() => createSanitizedAcpxSpawnInput({[key]:value, [CONFIGURED_ENVIRONMENT_KEYS]:JSON.stringify([key])}, "claude")).toThrow("configured environment");
+    }
+  });
   it("keeps explicit Claude managed-command selectors without forwarding GitHub credentials", () => {
     const helpers = { PATH: "/managed:/usr/bin", BASH_ENV: "/managed/.bashrc", ZDOTDIR: "/managed",
       GH_CONFIG_DIR: "/managed", PAPERCLIP_GITHUB_LAUNCHER_DIR: "/managed" };

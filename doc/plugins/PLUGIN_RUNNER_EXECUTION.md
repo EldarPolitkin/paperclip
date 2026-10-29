@@ -281,3 +281,8 @@ The pure launch factory exports `RUNNER_GITHUB_LAUNCHER_VERSION = 1` for this
 contract. A provider must check it as well as the host broker schema and its
 Launcher capability before advertising managed GitHub commands. The installed
 Runner must match the factory's source revision.
+
+The helper projection is marked by the controller-owned
+`PAPERCLIP_GITHUB_LAUNCHER_DIR`. Task overrides cannot supply that marker or the
+shell selectors. Run preparation strips stored bindings before secret resolution,
+and configured task-environment projections reject the shell selectors too.

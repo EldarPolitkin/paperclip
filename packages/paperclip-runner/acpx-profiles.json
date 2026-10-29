@@ -37,7 +37,7 @@
       "agentServerVersion": "1.0.88",
       "agentRuntimePackage": null,
       "agentRuntimeVersion": null,
-      "commandDigest": "sha256:bb4fed5ef76161172054c87e6850f3e76298e15d85348bdb91b4d324182b0c9e",
+      "commandDigest": "sha256:25eb0275350fe55e2e41e5ae6963b83ba02119e6530c8a5a7471a28297087831",
       "requiresProviderPolicy": true
     },
     "claude": {

@@ -92,7 +92,7 @@ describe("Copilot build-owned installation", () => {
     const prior = JSON.parse(bytes.toString("utf8"));
     const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v82-identity.json", import.meta.url), "utf8"));
     expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
-      "agentProfileVersion", "configuredEnvironmentRustSourceSha256", "credentialBindingSourceSha256", "profileCompatibilitySourceSha256", "providerLaunchSourceSha256",
+      "agentProfileVersion", "configuredEnvironmentRustSourceSha256", "configuredEnvironmentSourceSha256", "credentialBindingSourceSha256", "profileCompatibilitySourceSha256", "providerLaunchSourceSha256",
     ]);
     expect(isSupportedAcpxProfileVersion("copilot", 81)).toBe(true);
     expect(isSupportedAcpxProfileVersion("grok", 12)).toBe(true);
@@ -102,7 +102,7 @@ describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
     expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(82);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:bb4fed5ef76161172054c87e6850f3e76298e15d85348bdb91b4d324182b0c9e");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:25eb0275350fe55e2e41e5ae6963b83ba02119e6530c8a5a7471a28297087831");
   });
 
 it("preserves published v65 while binding retained-maintenance waits in v66", async () => {
