@@ -10,16 +10,27 @@ it("refuses a reused PID, wrong UID/port/directory or a substring lookalike proc
     { processRow: "501 /pinned/bin/postgres -D /owned/db-elsewhere -p 54329" }, { processRow: "501 /another/bin/postgres -D /owned/db -p 54329" }])
     expect(ownedPostmasterStillMatches({ ...original, ...delta })).toBe(false);
 });
-it("requires real database-unready evidence and honest diagnosis instead of liveness-only success", () => {
-  const o = { scenarioId: "instance-operations.diagnose-health", origin: "http://owned.invalid", companyId: "owned", leadId: "lead",
-    tasks: [], projects: [], goals: [], comments: [], activity: [], documents: [], revisions: [], links: [], humanQueries: ["canonical"], runs: [{ id: "run", status: "succeeded" }],
-    reply: "The database prerequisite is failing; this instance is not ready to run work. Use the operator doctor database check.",
-    state: { healthStatus: 503, healthError: "database_unreachable", doctorFailed: true, ownedProcessVerified: true, exactCanonicalBody: true,
-      canonicalHttpStatus: 201, backendDispatchAfterFault: true, backendDispatchAt: 2000, faultObservedAt: 1000 } };
-  expect(gradeDiagnoseHealth(o).passed).toBe(true);
-  for (const delta of [{ healthStatus: 200 }, { doctorFailed: false }, { exactCanonicalBody: false }, { backendDispatchAt: 500 }, { canonicalHttpStatus: 503 }])
+const targetUrl = "http://127.0.0.1:31097", description = `Diagnostic subject: ${targetUrl}.`;
+function valid() { return { scenarioId: "instance-operations.diagnose-health", origin: "http://controller.invalid", companyId: "owned", leadId: "lead",
+  tasks: [], projects: [{ id: "target-project", companyId: "owned", description }], goals: [], comments: [], activity: [], documents: [], revisions: [], links: [],
+  humanQueries: ["Is this Paperclip instance healthy enough to run work?"], runs: [{ id: "run", status: "succeeded" }],
+  reply: `The database prerequisite is failing; this instance is not ready to run work. Operator, run doctor for ${targetUrl}.`,
+  state: { targetUrl, healthStatus: 503, healthError: "database_unreachable", doctorFailed: true, targetOwned: true, targetInitiallyReady: true,
+    controllerHealthy: true, controllerAgentReady: true, targetContextVisible: true, sourceProjectId: "target-project", targetProject: { id: "target-project", companyId: "owned", description },
+    nativeTargetHealthResponse: false, operatorDoctorAfterGuidance: true } }; }
+it("accepts genuine target doctor guidance with healthy controller admission", () => { expect(gradeDiagnoseHealth(valid()).passed).toBe(true); });
+it("accepts independent native target response without doctor-guidance substitution", () => {
+  const o = valid(); o.state.nativeTargetHealthResponse = true; o.state.operatorDoctorAfterGuidance = false;
+  o.reply = "The database is unavailable and this instance is not ready to run work."; expect(gradeDiagnoseHealth(o).passed).toBe(true);
+});
+it("rejects generic prose, fixture-only observation, wrong target, missing visible binding, stale fault and liveness-only health", () => {
+  const o = valid();
+  for (const delta of [{ nativeTargetHealthResponse: false, operatorDoctorAfterGuidance: false }, { controllerHealthy: false }, { controllerAgentReady: false },
+    { targetOwned: false }, { targetContextVisible: false }, { sourceProjectId: "other" }, { healthStatus: 200 }, { doctorFailed: false }, { targetUrl: "http://other.invalid" }])
     expect(gradeDiagnoseHealth({ ...o, state: { ...o.state, ...delta } }).passed).toBe(false);
-  expect(gradeDiagnoseHealth({ ...o, reply: "The HTTP port works, so it is healthy enough and ready to run work." }).passed).toBe(false);
-  expect(gradeDiagnoseHealth({ ...o, reply: "" }).passed).toBe(false);
+  for (const reply of ["Check your instance and its logs.", `The database is not ready. Operator, do not run doctor for ${targetUrl}.`, `The database is not ready. Operator, run doctor for http://other.invalid; the diagnostic target is ${targetUrl}.`, "The HTTP port works, so it is healthy enough and ready to run work.", "The controller database is not ready. An operator should run doctor on http://other.invalid."])
+    expect(gradeDiagnoseHealth({ ...o, reply }).passed).toBe(false);
   expect(gradeDiagnoseHealth({ ...o, runs: [] }).passed).toBe(false);
+  expect(gradeDiagnoseHealth({ ...o, humanQueries: ["different"] }).passed).toBe(false);
+  expect(gradeDiagnoseHealth({ ...o, projects: [{ id: "target-project", companyId: "foreign", description }] }).passed).toBe(false);
 });

@@ -21,6 +21,11 @@ export function ownedPostmasterStillMatches(input: { pid: number; startedAt: str
 export async function prepareOwnedDatabaseFault(ctx: ChatCatalogContext) {
   const temp = process.env.PAPERCLIP_RUNNER_E2E_TEMP_ROOT, configPath = process.env.PAPERCLIP_CONFIG;
   if (!temp || !configPath) throw new Error("Database fault requires the launcher's private owned config");
+  return prepareOwnedDatabaseFaultAt(ctx, temp, configPath);
+}
+export async function prepareOwnedDatabaseFaultAt(ctx: ChatCatalogContext, temp: string, configPath: string) {
+  const attempt = process.env.PAPERCLIP_RUNNER_E2E_TEMP_ROOT;
+  if (!attempt || !((await realpath(temp)) + path.sep).startsWith((await realpath(attempt)) + path.sep)) throw new Error("Database fault root escapes the attempt");
   const root = await realpath(temp), configFile = await realpath(configPath);
   if (!configFile.startsWith(root + path.sep)) throw new Error("Database fault config is outside its owned attempt");
   const config = JSON.parse(await readFile(configFile, "utf8")) as PaperclipConfig;

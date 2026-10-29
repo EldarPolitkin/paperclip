@@ -3105,3 +3105,17 @@ they are not reported as charges or converted into reviewed lifecycle bounds.
 This mode therefore does not certify a full-lifecycle operating-cost ceiling.
 Omitting the policy preserves the stricter full-accounting gate. Historical
 journals and their holds are not rewritten by changing future campaign policy.
+
+The manual `instance-operations.diagnose-health` fixture keeps the chat controller
+healthy and names a separate owned, unseeded development instance in the saved
+conversation title and its visible project context before the unchanged query.
+Only that target's real PostgreSQL service is stopped. A target-only Node 24
+preload observes the real HTTP diagnostics channels without changing responses;
+these channels are experimental. Direct-health evidence requires a completed
+503 response and unique loopback socket ownership with PID-generation ancestry
+to the exact native run. Missing or raced ownership remains unknown. The
+alternative operator-doctor guidance path uses a genuine check of the named
+target. Fixture probes alone and generic advice cannot pass. Local pure controls
+qualify these contracts, not Linux socket visibility or a product/model outcome;
+those still require an authorized remote attempt. Target inventory must contain
+no agents or heartbeat runs before the fault and after recovery.

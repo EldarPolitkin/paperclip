@@ -14,7 +14,7 @@ import { sendChatMessage } from "../chat-flow.js";
 import { checks, project, task, type Entity } from "./internal-support.js";
 import { privilegedDefinition, privilegedObservation, settlePrivilegedChat, companionPhase } from "./privileged-support.js";
 const execute = promisify(execFile);
-interface OwnedDev { root: string; checkout: string; home: string; instance: string; env: NodeJS.ProcessEnv; loader: string; entry: string; child?: ChildProcess; closed?: Promise<void>; config?: string }
+export interface OwnedDev { sourceConfig: string; revision: string; root: string; checkout: string; home: string; instance: string; env: NodeJS.ProcessEnv; loader: string; entry: string; child?: ChildProcess; closed?: Promise<void>; config?: string }
 const owned = new WeakMap<ChatCatalogContext, OwnedDev>();
 const source = fileURLToPath(new URL("../../../", import.meta.url));
 const digest = (b: Buffer) => createHash("sha256").update(b).digest("hex");
@@ -23,11 +23,11 @@ export function validOwnedDevResult(s: Record<string, unknown>) {
     && s.targetStopped === true && s.targetCleaned === true && s.unrelatedSentinelUnchanged === true
     && s.sourceRevisionPinned === true && typeof s.targetUrl === "string" && s.sourceCliMatches === true;
 }
-async function command(o: OwnedDev, args: string[]) {
-  try { return (await execute(process.execPath, ["--import", o.loader, o.entry, ...args], { cwd: o.checkout, env: o.env, timeout: 240000, maxBuffer: 1_048_576 })).stdout; }
+export async function ownedDevCommand(o: OwnedDev, args: string[], timeout = 240000) {
+  try { return (await execute(process.execPath, ["--import", o.loader, o.entry, ...args], { cwd: o.checkout, env: o.env, timeout, maxBuffer: 1_048_576 })).stdout; }
   catch { throw new Error("Owned development-instance CLI command failed; private output withheld"); }
 }
-async function stop(o: OwnedDev) {
+export async function stopOwnedDev(o: OwnedDev) {
   if (!o.child || !o.closed) return;
   if (o.child.exitCode === null && o.child.signalCode === null) o.child.kill("SIGTERM");
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -45,17 +45,16 @@ export function gradeOwnedDev(value: unknown) {
     && /health|ready|clean|stopp/i.test(phase.reply), "The actual follow-up reports the measured target URL and its final readiness/cleanup state.");
   return c.result();
 }
-const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privileged-owned-dev", {
-  async setup(ctx) {
+export async function prepareOwnedDevSource(ctx: ChatCatalogContext, retain: (o: OwnedDev) => void = () => {}): Promise<OwnedDev> {
     const temp = process.env.PAPERCLIP_RUNNER_E2E_TEMP_ROOT, sourceConfig = process.env.PAPERCLIP_CONFIG, revision = process.env.PAPERCLIP_RUNNER_E2E_SOURCE_SHA;
     if (!temp || !sourceConfig || !revision || !/^[a-f0-9]{40}$/.test(revision)) throw new Error("Owned dev companion requires a source-pinned immutable candidate and private source config");
     const root = await mkdtemp(path.join(await realpath(temp), "operator-dev-"));
     if (!(await realpath(sourceConfig)).startsWith(await realpath(temp) + path.sep)) throw new Error("Dev seed source config is outside this attempt");
     const checkout = path.join(root, "checkout"), home = path.join(root, "instances-home");
-    const o: OwnedDev = { root, checkout, home, instance: `eval-${ctx.input.nonce.replace(/[^a-z0-9]/gi, "").slice(0, 32)}`,
+    const o: OwnedDev = { sourceConfig, revision, root, checkout, home, instance: `eval-${ctx.input.nonce.replace(/[^a-z0-9]/gi, "").slice(0, 32)}`,
       loader: path.join(source, "cli/node_modules/tsx/dist/loader.mjs"), entry: path.join(checkout, "cli/src/index.ts"),
       env: { PATH: process.env.PATH, HOME: path.join(root, "operator-home"), PAPERCLIP_HOME: home, PAPERCLIP_TELEMETRY_DISABLED: "1", PAPERCLIP_NO_BROWSER: "1", NO_COLOR: "1" } };
-    owned.set(ctx, o);
+    retain(o);
     // Copy actual selected candidate sources. Dependency links resolve only to
     // this immutable campaign candidate, never the shared mutable worktree.
     const excluded = new Set(["node_modules", ".git", "dist", "target", "results", ".paperclip", "data", "__pycache__", ".env", ".codex", ".secrets"]);
@@ -67,6 +66,12 @@ const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privilege
     }
     await mkdir(o.env.HOME!, { recursive: true });
     await execute("git", ["init", "--initial-branch=owned-eval"], { cwd: checkout, env: { ...o.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" }, timeout: 10000 });
+    return o;
+}
+const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privileged-owned-dev", {
+  async setup(ctx) {
+    const o = await prepareOwnedDevSource(ctx, o => owned.set(ctx, o));
+    const { root, checkout, sourceConfig, revision } = o;
     const sentinel = path.join(root, "unrelated-owned-sentinel.txt"); await writeFile(sentinel, ctx.input.nonce, { mode: 0o600 });
     const launch = await project(ctx), canary = await task(ctx, "Owned dev seed canary", launch.id, { description: `Retain ${ctx.input.nonce}` });
     return { task: canary, sourceConfigOwned: true, sourceRevision: revision, sourceRevisionPinned: true,
@@ -78,7 +83,7 @@ const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privilege
     const reserve = async () => { const listener = createServer(); const port = await listenOnFetchAllowedPort(listener); await new Promise<void>((resolve, reject) => listener.close(e => e ? reject(e) : resolve())); return port; };
     const serverPort = await reserve(), dbPort = await reserve();
     if (serverPort === dbPort) throw new Error("Owned dev ports unexpectedly collide");
-    await command(o, ["worktree", "init", "--instance", o.instance, "--home", o.home, "--from-config", process.env.PAPERCLIP_CONFIG!, "--server-port", String(serverPort), "--db-port", String(dbPort), "--seed-mode", "minimal"]);
+    await ownedDevCommand(o, ["worktree", "init", "--instance", o.instance, "--home", o.home, "--from-config", process.env.PAPERCLIP_CONFIG!, "--server-port", String(serverPort), "--db-port", String(dbPort), "--seed-mode", "minimal"]);
     o.config = path.join(o.checkout, ".paperclip/config.json");
     const actual = JSON.parse(await readFile(o.config, "utf8"));
     const actualData = await realpath(actual.database.embeddedPostgresDataDir);
@@ -96,8 +101,8 @@ const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privilege
     } finally { await db.end({ timeout: 5 }); }
     const sourceTask = await ctx.input.api.get<Entity>(`/api/issues/${marker.id}`);
     state.sourceCanaryUnchanged = sourceTask.title === marker.title && sourceTask.description === marker.description && sourceTask.status === marker.status;
-    await stop(o); state.targetStopped = true;
-    await command(o, ["worktree:cleanup", o.instance, "--instance", o.instance, "--home", o.home]);
+    await stopOwnedDev(o); state.targetStopped = true;
+    await ownedDevCommand(o, ["worktree:cleanup", o.instance, "--instance", o.instance, "--home", o.home]);
     state.targetCleaned = !(await stat(path.join(o.home, "instances", o.instance)).then(() => true, e => { if (e.code === "ENOENT") return false; throw e; }));
     state.unrelatedSentinelUnchanged = await readFile(path.join(o.root, "unrelated-owned-sentinel.txt"), "utf8") === ctx.input.nonce;
     const receipt = { targetUrl: state.targetUrl, healthyWhenStarted: state.actualTargetHealthy, targetStopped: state.targetStopped, targetCleaned: state.targetCleaned,
@@ -108,7 +113,7 @@ const dev = privilegedDefinition("cli-operations.owned-dev-instance", "privilege
   }, grade: gradeOwnedDev, async verifyResult(ctx) { await expect(ctx.input.page.getByTestId("task-chat-composer-input")).toBeVisible(); },
 });
 dev.expectedRunCount = 2; dev.expectedHumanMessageCount = 2; dev.attemptTimeoutMs = 900000;
-dev.cleanup = async ctx => { const o = owned.get(ctx); if (!o) return; await stop(o); if (o.config) await command(o, ["worktree:cleanup", o.instance, "--instance", o.instance, "--home", o.home]);
+dev.cleanup = async ctx => { const o = owned.get(ctx); if (!o) return; await stopOwnedDev(o); if (o.config) await ownedDevCommand(o, ["worktree:cleanup", o.instance, "--instance", o.instance, "--home", o.home]);
   const root = await realpath(process.env.PAPERCLIP_RUNNER_E2E_TEMP_ROOT!), directory = await realpath(o.root);
   if (!directory.startsWith(root + path.sep) || !path.basename(directory).startsWith("operator-dev-")) throw new Error("Refusing non-owned development cleanup");
   await rm(directory, { recursive: true }); owned.delete(ctx); };

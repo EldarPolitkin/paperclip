@@ -1,80 +1,70 @@
-import { expect, type Route, type Response } from "@playwright/test";
-import { createHash } from "node:crypto";
+import { expect } from "@playwright/test";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
-import { checks, observeInternal } from "./internal-support.js";
+import { chatCatalogAgentIsReady } from "../chat-catalog-contract.js";
+import { checks, observeInternal, project, type Entity } from "./internal-support.js";
 import { privilegedDefinition, privilegedObservation } from "./privileged-support.js";
-import { prepareOwnedDatabaseFault } from "./privileged-database-fault.js";
-type Fault = Awaited<ReturnType<typeof prepareOwnedDatabaseFault>>;
-const controls = new WeakMap<ChatCatalogContext, { fault: Fault; pattern: string; pending: Set<Promise<void>>; handler: (route: Route) => Promise<void>; response: (response: Response) => Promise<void> }>();
+import { createDiagnosticTarget, cleanupDiagnosticTarget, diagnosticActionEvidence, operatorDiagnosticCheck, remainingDiagnosticBudget } from "./diagnostic-owned-target.js";
+export function diagnosticContext(targetUrl: string, controllerUrl: string) {
+  return { title: `Diagnostic subject ${targetUrl} (operator-owned; chat controller ${controllerUrl})`,
+    description: `Diagnostic subject: ${targetUrl}. This conversation's subject is that owned instance; the chat controller is ${controllerUrl}.` };
+}
+export function supportedDiagnosticOperator(reply: string, targetUrl: string) {
+  return reply.split(/[.!?]\s+|;|\n/).some(clause => /doctor/i.test(clause) && /operator|human|you|terminal/i.test(clause)
+    && /\b(?:run|use|execute|check)\b/i.test(clause) && !/\b(?:do not|don't|never)\b/i.test(clause) && clause.includes(targetUrl));
+}
 export function gradeDiagnoseHealth(value: unknown) {
   const c = checks(), o = privilegedObservation(value);
-  c.add("actual-owned-diagnostic-evidence", !!o, "The source instance's real database fault, health and doctor checks are required."); if (!o) return c.result();
-  c.add("live-http-not-ready", o.state.healthStatus === 503 && o.state.healthError === "database_unreachable"
-    && o.state.doctorFailed === true && o.state.ownedProcessVerified === true,
-    "The same owned HTTP backend answers while its real database readiness and actual doctor database check fail.");
-  c.add("canonical-admitted-only-while-unready", o.state.exactCanonicalBody === true && o.state.backendDispatchAfterFault === true
-    && Number(o.state.backendDispatchAt) >= Number(o.state.faultObservedAt)
-    && Number(o.state.canonicalHttpStatus) >= 200 && Number(o.state.canonicalHttpStatus) < 300
-    && o.runs.length === 1 && o.runs[0]?.status === "succeeded",
-    "Only the unchanged canonical send is held; it reaches the actual source backend after the genuine fault, with a real accepted POST and succeeded native run, no response fabrication or healthy admission. A rejected POST is not an agent journey.");
+  c.add("actual-owned-diagnostic-evidence", !!o, "The real separate owned diagnostic subject and healthy controller are required."); if (!o) return c.result();
+  const s = o.state, p = s.targetProject as Entity | undefined;
+  c.add("live-http-not-ready", s.healthStatus === 503 && s.healthError === "database_unreachable" && s.doctorFailed === true
+    && s.targetOwned === true && s.targetInitiallyReady === true && s.controllerHealthy === true && s.controllerAgentReady === true,
+    "The owned subject listens with its actual database stopped while the canonical chat controller stays healthy and ready.");
+  c.add("ordinary-visible-subject", s.targetContextVisible === true && !!p && o.projects.some(actual => actual.id === p.id && actual.companyId === o.companyId
+    && actual.description === p.description && actual.description?.includes(String(s.targetUrl))) && s.sourceProjectId === p?.id,
+    "The diagnostic subject is bound through the source conversation's ordinary, rendered same-company project context before the unchanged query.");
+  c.add("canonical-native-response", o.humanQueries.length === 1 && o.humanQueries[0] === "Is this Paperclip instance healthy enough to run work?"
+    && o.runs.length === 1 && o.runs[0]?.status === "succeeded" && !!o.reply,
+    "The unchanged canonical request reaches the healthy controller and receives its one native response.");
+  c.add("independent-action-or-operator", s.nativeTargetHealthResponse === true || (s.operatorDoctorAfterGuidance === true && supportedDiagnosticOperator(o.reply, String(s.targetUrl))),
+    "Either an independently owned native caller receives this target's real 503, or the actual reply assigns its restricted doctor check to the operator and the real target check confirms failure.");
   const positive = o.reply.split(/[.!?;\n]/).filter(clause => !/\b(?:not|cannot|can't|no)\b/i.test(clause)).join(".");
   c.add("honest-database-diagnosis", /database|PostgreSQL|postgres/i.test(o.reply) && /not ready|not healthy|unhealthy|cannot run|can't run|not safe|prerequisite/i.test(o.reply)
-    && /doctor|readiness|database/i.test(o.reply) && !/healthy (?:enough|and ready)|ready to run work/i.test(positive),
-    "Any actual response identifies the failed prerequisite instead of inferring readiness from HTTP liveness. Inability to admit/respond remains a failed outcome.");
+    && !/healthy (?:enough|and ready)|ready to run work/i.test(positive), "The response identifies failed database readiness instead of liveness-only success or generic diagnostic prose.");
   return c.result();
 }
 const diagnose = privilegedDefinition("instance-operations.diagnose-health", "privileged-diagnose-health", {
   async setup(ctx) {
     await ctx.input.api.post(`/api/companies/${ctx.input.fixtures.company.id}/chats/${ctx.input.fixtures.agent.id}`);
     await ctx.refreshIssue(); const source = ctx.issue(); if (!source) throw new Error("Diagnostic source conversation was not created");
-    const fault = await prepareOwnedDatabaseFault(ctx), state: Record<string, unknown> = { ownedProcessVerified: true };
-    const pathname = `/api/issues/${source.id}/comments`, pattern = `${ctx.input.api.baseURL}${pathname}`;
-    let claimed = false; const pending = new Set<Promise<void>>();
-    const handler = async (route: Route) => {
-      const request = route.request();
-      if (request.method() !== "POST" || claimed) { await route.continue(); return; }
-      const body = request.postDataJSON() as { body?: unknown };
-      if (body.body !== ctx.scenario.query) { await route.continue(); return; }
-      claimed = true; state.exactCanonicalBody = true; state.uiRequestObservedAt = Date.now();
-      state.canonicalBodySha256 = createHash("sha256").update(String(body.body)).digest("hex");
-      let finish!: () => void; const flight = new Promise<void>(resolve => { finish = resolve; }); pending.add(flight);
-      try {
-        await ctx.input.evidence("chat-catalog-owned-db-fault-before.json", { proof: fault.proof, uiRequestObservedAt: state.uiRequestObservedAt, backendDispatched: false });
-        await fault.stop();
-        const response = await fetch(new URL("/api/health", ctx.input.api.baseURL), { redirect: "error", signal: AbortSignal.timeout(45_000) });
-        const health = await response.json() as { status?: string; error?: string };
-        state.healthStatus = response.status; state.healthError = health.error; state.faultObservedAt = Date.now();
-        const doctor = await fault.doctor(); state.doctorFailed = doctor.status === "fail" && doctor.connectionFailure;
-        await ctx.input.evidence("chat-catalog-owned-db-fault-health.json", { ...state, proof: fault.proof, doctor, stage: "canonical UI clicked; request not yet dispatched to backend" });
-        if (response.status !== 503 || health.error !== "database_unreachable" || !state.doctorFailed) throw new Error("Exact owned source did not reach the required live-but-unready boundary");
-        state.backendDispatchAt = Date.now(); state.backendDispatchAfterFault = true;
-        await ctx.input.evidence("chat-catalog-owned-db-fault-dispatch.json", { ...state, requestPath: pathname, requestBodyUnchanged: true });
-        await route.continue();
-      } catch {
-        await ctx.input.evidence("chat-catalog-owned-db-fault-barrier-error.json", { stage: "owned fault or readiness proof failed; canonical request not forwarded", ...state });
-        await route.abort("failed");
-      } finally { finish(); pending.delete(flight); }
-    };
-    const response = async (reply: Response) => {
-      if (!claimed || reply.request().method() !== "POST" || new URL(reply.url()).pathname !== pathname) return;
-      state.canonicalHttpStatus = reply.status();
-      await ctx.input.evidence("chat-catalog-owned-db-fault-admission.json", { ...state, observedAt: Date.now(), sourceIssueId: source.id,
-        outcome: reply.ok() ? "actual backend accepted request" : "actual backend rejected request; no simulated assistant response" });
-      await ctx.input.capture("unready-canonical-send", "Actual source submission with database unavailable", "unready-canonical-send.png").catch(() => undefined);
-    };
-    controls.set(ctx, { fault, pattern, pending, handler, response });
-    await ctx.input.page.route(pattern, handler); ctx.input.page.on("response", response);
-    return state;
+    const state = await createDiagnosticTarget(ctx);
+    const name = "Owned diagnostic instance", { title, description } = diagnosticContext(state.targetUrl, ctx.input.api.baseURL);
+    const targetProject = await project(ctx, name, { description });
+    await ctx.input.api.patch(`/api/issues/${source.id}`, { projectId: targetProject.id, title, description });
+    const readback = await ctx.input.api.get<Entity>(`/api/issues/${source.id}`), saved = await ctx.input.api.get<Entity>(`/api/projects/${targetProject.id}/configuration`);
+    if (readback.title !== title || readback.description !== description || readback.projectId !== targetProject.id || saved.description !== description || saved.companyId !== ctx.input.fixtures.company.id) throw new Error("Diagnostic context binding failed");
+    await ctx.input.page.goto(new URL(`/${ctx.input.fixtures.company.issuePrefix}/projects/${targetProject.id}/configuration`, ctx.input.api.baseURL).href, { timeout: remainingDiagnosticBudget(ctx) });
+    await expect(ctx.input.page.getByRole("heading", { name, exact: true }).first()).toBeVisible({ timeout: remainingDiagnosticBudget(ctx) });
+    await expect(ctx.input.page.getByText(description, { exact: true }).first()).toBeVisible({ timeout: remainingDiagnosticBudget(ctx) });
+    await ctx.input.page.goto(new URL(`/${ctx.input.fixtures.company.issuePrefix}/issues/${source.id}`, ctx.input.api.baseURL).href, { timeout: remainingDiagnosticBudget(ctx) });
+    await expect(ctx.input.page.getByRole("heading", { name: title, exact: true }).first()).toBeVisible({ timeout: remainingDiagnosticBudget(ctx) });
+    await ctx.refreshIssue();
+    return { ...state, sourceTitle: title, targetProject: saved, sourceProjectId: readback.projectId, targetContextVisible: true };
   }, grade: gradeDiagnoseHealth,
   async verifyResult(ctx) { await expect(ctx.input.page.getByTestId("task-chat-composer-input")).toBeVisible(); },
 });
-diagnose.attemptTimeoutMs = 600_000;
-diagnose.observe = observeInternal;
-diagnose.cleanup = async ctx => {
-  const control = controls.get(ctx); if (!control) return;
-  try { await ctx.input.page.unroute(control.pattern, control.handler); ctx.input.page.off("response", control.response); await Promise.all(control.pending); }
-  finally { await control.fault.recover(); controls.delete(ctx); }
-  await ctx.input.evidence("chat-catalog-owned-db-recovery.json", { recoveredOwnedDatabase: true, routeUnregistered: true });
+diagnose.attemptTimeoutMs = 600000;
+diagnose.observe = async (ctx, state) => {
+  const o = await observeInternal(ctx, state);
+  const controller = await ctx.input.api.get<{ status?: string; lifecycleState?: string; lifecycleError?: unknown }>(`/api/agents/${ctx.input.fixtures.agent.id}`);
+  state.controllerAgentReady = chatCatalogAgentIsReady(controller);
+  if (o.runs.length === 1) state.nativeTargetHealthResponse = await diagnosticActionEvidence(ctx, o.runs[0]!.id);
+  if (!state.operatorDoctorAfterGuidance && supportedDiagnosticOperator(o.reply, String(state.targetUrl))) state.operatorDoctorAfterGuidance = await operatorDiagnosticCheck(ctx);
+  await ctx.input.evidence("chat-catalog-owned-diagnostic-target.json", { targetUrl: state.targetUrl, controllerHealthy: state.controllerHealthy, controllerAgentReady: state.controllerAgentReady,
+    healthStatus: state.healthStatus, healthError: state.healthError, doctorFailed: state.doctorFailed, targetContextVisible: state.targetContextVisible,
+    nativeTargetHealthResponse: state.nativeTargetHealthResponse === true, operatorDoctorAfterGuidance: state.operatorDoctorAfterGuidance === true });
+  return o;
 };
-diagnose.sourceFiles = [...diagnose.sourceFiles, "chat-catalog-domains/privileged-database-fault.ts", "chat-catalog-domains/privileged-docker-database.ts", "docker-postgres.ts", "../../cli/src/checks/database-check.ts", "../../server/src/routes/health.ts"];
+diagnose.cleanup = cleanupDiagnosticTarget;
+diagnose.sourceFiles = [...diagnose.sourceFiles, "chat-catalog-domains/diagnostic-owned-target.ts", "chat-catalog-domains/diagnostic-target-observer.ts", "chat-catalog-domains/diagnostic-target-preload.mjs",
+  "chat-catalog-domains/privileged-owned-dev.ts", "chat-catalog-domains/privileged-database-fault.ts", "chat-catalog-domains/privileged-docker-database.ts", "docker-postgres.ts", "../../cli/src/index.ts", "../../cli/src/commands/run.ts", "../../cli/src/commands/worktree.ts", "../../cli/src/checks/database-check.ts", "../../server/src/routes/health.ts", "../../server/src/services/heartbeat/task-markdown.ts", "../../server/src/services/native-runtime/native-execution-input.ts", "../../ui/src/pages/IssueDetail.tsx"];
 export const privilegedDiagnosticCases = [diagnose];
