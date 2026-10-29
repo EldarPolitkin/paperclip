@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { once } from "node:events";
 import {
   buildRuntimeApiCandidateUrls,
   chooseLocalRuntimeApiUrl,
   choosePrimaryRuntimeApiUrl,
   collectReachableInterfaceHosts,
+  resolveLocalRuntimeApiUrl,
 } from "../runtime-api.js";
 import { createPaperclipHttpServer } from "../http/server.js";
 import { registerRunnerPrpAuthority, runnerPrpWebSocketInternals } from "../realtime/runner-prp-ws.js";
@@ -35,17 +37,19 @@ describe("runtime API discovery", () => {
     });
     const runId = "00000000-0000-4000-8000-000000000887";
     try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
       const registration = await registerRunnerPrpAuthority({
         companyId: "company-1", runId,
         authority: {} as DurablePrpControlPlane,
       });
       try {
-        expect(registration.connectUrl).toBe(`ws://127.0.0.1:3218/api/runner/v1/connect/${runId}`);
+        expect(registration.connectUrl).toBe(`${resolveLocalRuntimeApiUrl().replace("http:", "ws:")}/api/runner/v1/connect/${runId}`);
       } finally {
         await registration.release();
       }
     } finally {
-      server.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
       runnerPrpWebSocketInternals.resetForTests();
     }
   });

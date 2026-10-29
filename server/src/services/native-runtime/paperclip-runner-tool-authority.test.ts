@@ -3,6 +3,7 @@ import * as cloudIdentity from "../cloud-runtime-identity.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { createPaperclipHttpServer } from "../../http/server.js";
 import { LOW_TRUST_REVIEW_PRESET, upsertIssueDocumentSchema } from "@paperclipai/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import {
@@ -106,10 +107,10 @@ describe("PaperclipRunnerToolAuthority", () => {
   it("routes call_api through the private controller instead of the public callback origin", async () => {
     const privateRequests: Array<{ path: string | undefined; authenticated: boolean }> = [];
     const callbackRequests: string[] = [];
-    const controller = createServer((request, response) => {
+    const controller = createPaperclipHttpServer((request, response) => {
       privateRequests.push({ path: request.url, authenticated: /^Bearer /.test(request.headers.authorization ?? "") });
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ workProducts: [] }));
-    });
+    }, { apiUrl: "https://advertised.example.test" });
     const callback = createServer((request, response) => {
       callbackRequests.push(request.url ?? "");
       response.writeHead(404).end();

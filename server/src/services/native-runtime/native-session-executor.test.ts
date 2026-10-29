@@ -190,6 +190,7 @@ const durableRunnerState = (
 });
 
 const state = vi.hoisted(() => ({
+  localRuntimeApiUrl: vi.fn(() => "http://127.0.0.1:43219"),
   createAssignedMcpTools: vi.fn(),
   execute: vi.fn(),
   cleanup: vi.fn(),
@@ -245,6 +246,8 @@ const state = vi.hoisted(() => ({
   resolveRemoteRunnerBinary: vi.fn(async (input: { configuredPath?: string | null }) => input.configuredPath || "/tmp/paperclip-runnerd"),
   release: null as null | (() => void),
 }));
+
+vi.mock("../../runtime-api.js", () => ({ resolveLocalRuntimeApiUrl: state.localRuntimeApiUrl }));
 
 const accountingEvents = vi.hoisted(() => ({ committed: undefined as undefined | ((event: PrpEvent) => Promise<void>), duplicate: undefined as undefined | ((event: PrpEvent) => Promise<void>) }));
 vi.mock("./paperclip-control-plane-port.js", async importOriginal => {
@@ -412,6 +415,7 @@ import {
 import { onNativeRunnerEvidence } from "./native-runner-evidence-signal.js";
 
 beforeEach(() => {
+  state.localRuntimeApiUrl.mockReset().mockReturnValue("http://127.0.0.1:43219");
   state.drainMaintenance.mockReset().mockResolvedValue(undefined);
   usageRecorder.capture.mockReset().mockImplementation(async receipt => receipt);
   usageRecorder.create.mockReset().mockResolvedValue({ capture: usageRecorder.capture,
@@ -11675,7 +11679,7 @@ describe("runnerd provider runtime wiring", () => {
       dynamicToolHandler: async () => { throw new Error("Unexpected tool call"); }, client: client as never });
   }
 
-  it("binds Core API tools to the selected private controller listener", async () => {
+  it("passes the verified listener endpoint to Core API tools", async () => {
     const previous = Object.fromEntries(["PAPERCLIP_API_URL", "PAPERCLIP_LISTEN_HOST", "PAPERCLIP_LISTEN_PORT", "PORT"]
       .map(key => [key, process.env[key]]));
     try {
@@ -11683,10 +11687,12 @@ describe("runnerd provider runtime wiring", () => {
       process.env.PAPERCLIP_LISTEN_HOST = "127.0.0.1";
       process.env.PAPERCLIP_LISTEN_PORT = "43219";
       process.env.PORT = "3100";
+      state.localRuntimeApiUrl.mockReturnValueOnce("http://127.0.0.2:43229");
       const current = scopedNativeExecution("private-api-origin");
       state.createBackend.mockReturnValueOnce({ kind: "test", openSession: vi.fn() } as never);
       await createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: "private-api-controller" });
-      expect(state.toolAuthorityDefinitions).toHaveBeenLastCalledWith(expect.objectContaining({ apiUrl: "http://127.0.0.1:43219" }));
+      expect(state.localRuntimeApiUrl).toHaveBeenCalled();
+      expect(state.toolAuthorityDefinitions).toHaveBeenLastCalledWith(expect.objectContaining({ apiUrl: "http://127.0.0.2:43229" }));
       expect(process.env.PAPERCLIP_API_URL).toBe("https://callback-only.example.test");
     } finally {
       for (const [key, value] of Object.entries(previous)) {
@@ -11698,7 +11704,7 @@ describe("runnerd provider runtime wiring", () => {
 
   it.each([
     [undefined, "43219"], ["127.0.0.1", undefined], ["127.0.0.1", "0"], ["127.0.0.1", "invalid"],
-  ])("keeps embedded Core API fallback with listener host=%s port=%s", async (host, port) => {
+  ])("does not fall back to an advertised API without a verified listener (%s:%s)", async (host, port) => {
     const previous = Object.fromEntries(["PAPERCLIP_API_URL", "PAPERCLIP_LISTEN_HOST", "PAPERCLIP_LISTEN_PORT"]
       .map(key => [key, process.env[key]]));
     try {
@@ -11707,10 +11713,13 @@ describe("runnerd provider runtime wiring", () => {
       else process.env.PAPERCLIP_LISTEN_HOST = host;
       if (port === undefined) delete process.env.PAPERCLIP_LISTEN_PORT;
       else process.env.PAPERCLIP_LISTEN_PORT = port;
+      state.localRuntimeApiUrl.mockImplementationOnce(() => { throw new Error("local_runtime_api_listener_unavailable"); });
       const current = scopedNativeExecution(`embedded-api-origin-${host}-${port}`);
       state.createBackend.mockReturnValueOnce({ kind: "test", openSession: vi.fn() } as never);
-      await createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: "embedded-api-controller" });
-      expect(state.toolAuthorityDefinitions.mock.calls.at(-1)![0].apiUrl).toBeUndefined();
+      const previousDefinitions = state.toolAuthorityDefinitions.mock.calls.length;
+      await expect(createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: "embedded-api-controller" }))
+        .rejects.toThrow("local_runtime_api_listener_unavailable");
+      expect(state.toolAuthorityDefinitions).toHaveBeenCalledTimes(previousDefinitions);
       expect(process.env.PAPERCLIP_API_URL).toBe("http://embedded-controller.example.test");
     } finally {
       for (const [key, value] of Object.entries(previous)) {
