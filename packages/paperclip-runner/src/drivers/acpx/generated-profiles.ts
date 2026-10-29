@@ -48,12 +48,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "copilot",
-    "agentProfileVersion": 82,
+    "agentProfileVersion": 83,
     "agentServerPackage": "@github/copilot",
     "agentServerVersion": "1.0.88",
     "agentRuntimePackage": null,
     "agentRuntimeVersion": null,
-    "commandDigest": "sha256:e0eddf258e824bb0cd7e0ec0a12dc5b8eeff72262e176249b5e6e7d5ea977caf",
+    "commandDigest": "sha256:4cecc2ba4bc9674fbc6f585d81934789a98b75a36f074dfe2b40391ae9ef8a19",
     "permissionPolicy": "interactive"
   },
   "claude": {
@@ -87,12 +87,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "kimi",
-    "agentProfileVersion": 10,
+    "agentProfileVersion": 11,
     "agentServerPackage": "@moonshot-ai/kimi-code",
     "agentServerVersion": "2.3.3",
     "agentRuntimePackage": null,
     "agentRuntimeVersion": null,
-    "commandDigest": "sha256:c8a39af9d580cdb5fe20a3333a566e2f97a1b4ec3a0025cb647d2144df358604",
+    "commandDigest": "sha256:6bdee2692b41fea57ac9be810a5009bb5d65650beca9c816e310b27f0974cccc",
     "qualificationStatus": "pending",
     "permissionPolicy": "interactive"
   }

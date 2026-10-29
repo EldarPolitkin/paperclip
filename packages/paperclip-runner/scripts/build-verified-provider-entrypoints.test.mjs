@@ -46,3 +46,7 @@ import "./materialize-kimi-distribution.test.mjs";
 import "./provision-kimi-package.test.mjs";
 import "./patch-kimi-runtime.test.mjs";
 import "./kimi-metadata-probe.test.mjs";
+import "./antigravity-provisioner-layout.test.mjs";
+import "./materialize-antigravity-distribution.test.mjs";
+import "./probe-antigravity-metadata.test.mjs";
+import "./patch-antigravity-runtime.test.mjs";
