@@ -1,14 +1,39 @@
 import { once } from "node:events";
 import dns from "node:dns";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import express from "express";
 import { DurablePrpControlPlane } from "../vendor/paperclip-runner/index.js";
 import { registerRunnerPrpAuthority, runnerPrpWebSocketInternals } from "../realtime/runner-prp-ws.js";
 import { resolveLocalRuntimeApiUrl } from "../runtime-api.js";
 import { createPaperclipHttpServer } from "./server.js";
+import { privateHostnameGuard } from "../middleware/private-hostname-guard.js";
+
+async function guardedNativeRead(bindHost: string, configuredHost = bindHost) {
+  const app = express();
+  app.use(privateHostnameGuard({ enabled: true, bindHost: configuredHost, allowedHostnames: [] }));
+  app.get("/api/native-read", (req, res) => {
+    res.status(req.header("authorization") === "Bearer synthetic-readonly-run-token" ? 200 : 401).json({ readonly: true });
+  });
+  const server = createPaperclipHttpServer(app, { apiUrl: "https://advertised.example.test" });
+  try {
+    server.listen(0, bindHost);
+    await once(server, "listening");
+    const url = `${resolveLocalRuntimeApiUrl()}/api/native-read`;
+    const authenticated = await fetch(url, { headers: { Authorization: "Bearer synthetic-readonly-run-token" } });
+    expect(authenticated.status).toBe(200);
+    expect(await authenticated.json()).toEqual({ readonly: true });
+    const unauthenticated = await fetch(url);
+    expect(unauthenticated.status).toBe(401);
+    await unauthenticated.body?.cancel();
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+}
 
 describe("Paperclip HTTP server runner transport", () => {
   afterEach(() => {
@@ -179,5 +204,25 @@ describe("Paperclip HTTP server runner transport", () => {
     } finally {
       await Promise.all([first, second].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
     }
+  });
+
+  it.each(["127.0.0.1", "::1", "::ffff:127.0.0.1"])("routes a guarded native read through the real %s listener", async host => {
+    await guardedNativeRead(host);
+  });
+
+  it("routes a guarded native read after a configured hostname binds a local interface", async context => {
+    const address = Object.values(networkInterfaces()).flatMap(entries => entries ?? [])
+      .find(entry => !entry.internal && entry.family === "IPv4" && !entry.address.startsWith("127."))?.address;
+    if (!address) { context.skip(); return; }
+    const hostname = "guarded-controller.example.test";
+    let lookups = 0;
+    vi.spyOn(dns, "lookup").mockImplementation(((host, options, callback) => {
+      if (host !== hostname || typeof options !== "object" || options.all !== true) throw new Error("Unexpected lookup in local fixture");
+      const lookedUp = callback as (error: NodeJS.ErrnoException | null, addresses?: dns.LookupAddress[]) => void;
+      if (++lookups !== 1) throw new Error("Repeated hostname lookup in local fixture");
+      lookedUp(null, [{ address, family: 4 }]);
+    }) as typeof dns.lookup);
+    await guardedNativeRead(hostname);
+    expect(lookups).toBe(1);
   });
 });
