@@ -1,5 +1,6 @@
 import type { WorkspaceCheckpointMetrics } from "./workspace-checkpoint.js";
 import { workspaceSeedGeneration, workspaceSeedCloneSnapshot, readWorkspaceSeedGeneration, publishWorkspaceSeedGeneration } from "./workspace-seed-cache.js";
+import { workspaceGitIndexRefreshCommand } from "./workspace-git-index-refresh.js";
 import { writeCheckpointBaseline, workspaceCheckpointScript, readCheckpointSnapshot, validateCheckpointPayload } from "./workspace-checkpoint.js";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -706,27 +707,6 @@ function buildWorkspaceTarExtractCommand(input: {
     `tar${(input.exclude ?? []).map(entry => ` --exclude=${shellQuote(escapeTarExcludeLiteral(entry))}`).join("")} -xf ${shellQuote(input.remoteTar)} -C ${shellQuote(input.workspaceRemoteDir)} && ` +
     `rm -f ${shellQuote(input.remoteTar)}`
   );
-}
-
-function buildWorkspaceGitIndexRefreshCommand(input: {
-  workspaceRemoteDir: string;
-  git: GitWorkspaceSnapshot | null;
-  repositories: NonNullable<GitWorkspaceSnapshot["repositories"]>;
-}): string {
-  const directories = new Set<string>();
-  const visit = (relative: string, snapshot: GitWorkspaceSnapshot) => {
-    directories.add(path.posix.join(input.workspaceRemoteDir, relative));
-    for (const repository of snapshot.repositories ?? []) child(relative, repository);
-  };
-  const child = (relative: string, repository: (typeof input.repositories)[number]) => {
-    if (path.posix.isAbsolute(repository.path) || repository.path.split("/").includes("..")) throw new Error("workspace_seed_git_path_invalid");
-    visit(path.posix.join(relative, repository.path), repository.snapshot);
-  };
-  if (input.git) visit("", input.git);
-  else for (const repository of input.repositories) child("", repository);
-  return [...directories].map(directory =>
-    `(git -C ${shellQuote(directory)} -c core.fsmonitor=false update-index --refresh >/dev/null 2>&1 || true)`,
-  ).join(" && ");
 }
 
 // Named builder (C3): remove paths deleted in the host git worktree from the
@@ -1676,8 +1656,10 @@ export async function prepareSandboxManagedRuntime(input: {
                   workspaceRemoteDir,
                   remoteTar: remoteGitTar,
                   wipeExceptNames: [".paperclip-runtime"],
-                }) + " && " + buildWorkspaceGitIndexRefreshCommand({ workspaceRemoteDir, git: gitSnapshot, repositories }),
+                }),
               });
+              const refresh = workspaceGitIndexRefreshCommand({ workspaceRemoteDir, git: gitSnapshot, repositories, timeoutMs: input.spec.timeoutMs });
+              if (refresh) workspacePostUploadCommands.push({ command: refresh });
               workspaceUploadBytes += (await fs.stat(gitTarPath)).size;
             }
 

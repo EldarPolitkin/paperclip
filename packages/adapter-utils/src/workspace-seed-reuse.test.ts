@@ -31,7 +31,7 @@ function client(): SandboxManagedRuntimeClient {
         bytesTransferred += bytes.length;
       }
     }
-    for (const command of operation.postUploadCommands ?? []) await exec("sh", ["-c", command.command]);
+    for (const command of operation.postUploadCommands ?? []) await exec("sh", ["-c", command.command], { timeout: command.timeoutMs });
     return { operationId: operation.operationId, filesTransferred: operation.files.length, bytesTransferred };
   })) });
   return {
@@ -40,7 +40,7 @@ function client(): SandboxManagedRuntimeClient {
     readFile: file => fs.readFile(file),
     listFiles: async directory => (await fs.readdir(directory, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name),
     remove: file => fs.rm(file, { recursive: true, force: true }),
-    run: command => exec("sh", ["-c", command]).then(() => {}),
+    run: (command, options) => exec("sh", ["-c", command], { timeout: options?.timeoutMs }).then(() => {}),
     syncIn: sync,
     syncOut: sync,
   };
@@ -202,7 +202,7 @@ it("separates shared seeds when file contents, Git head, origin or repository la
 });
 
 it("stages the working tree when the destination index refresh fails", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-index-refresh-failure-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-index-refresh-failure-'"));
   roots.push(root);
   const host = path.join(root, "host"), remote = path.join(root, "remote"), bin = path.join(root, "bin");
   await fs.mkdir(host); await fs.mkdir(bin);
@@ -224,3 +224,31 @@ it("stages the working tree when the destination index refresh fails", async () 
   expect(await git(remote, "rev-parse", "HEAD")).toBe(head);
   await prepared.cleanupWorkspaceSnapshot?.();
 });
+
+it.each([2_000, 8_000])("keeps optional refresh within the staging timeout (%s ms)", async timeoutMs => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-index-refresh-timeout-"));
+  roots.push(root);
+  const host = path.join(root, "host"), remote = path.join(root, "remote"), bin = path.join(root, "bin");
+  await fs.mkdir(host); await fs.mkdir(bin);
+  await git(host, "init", "-q", "-b", "main");
+  await fs.writeFile(path.join(host, "tracked.txt"), "committed bytes\n");
+  await git(host, "add", ".");
+  await git(host, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "Seed");
+  await fs.writeFile(path.join(host, "tracked.txt"), "working-tree bytes\n");
+  const realGit = (await exec("which", ["git"])).stdout.trim(), started = path.join(root, "started"), completed = path.join(root, "completed");
+  await fs.writeFile(path.join(bin, "git"), `#!${process.execPath}\nconst fs=require('node:fs'),cp=require('node:child_process');const args=process.argv.slice(2);if(args.includes('update-index')){fs.writeFileSync(${JSON.stringify(started)},JSON.stringify({pid:process.pid,index:process.env.GIT_INDEX_FILE??null}));if(process.env.GIT_INDEX_FILE)fs.writeFileSync(process.env.GIT_INDEX_FILE+'.lock','owned refresh lock');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(completed)},'completed');process.exit(0)},3000);}else{const child=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(child.status??1);}\n`, { mode: 0o700 });
+  vi.stubEnv("PATH", bin + path.delimiter + process.env.PATH);
+  const prepared = await prepareSandboxManagedRuntime({
+    spec: { transport: "sandbox", provider: "filesystem", sandboxId: "refresh-timeout", remoteCwd: remote, timeoutMs, apiKey: null },
+    adapterKey: "test", client: client(), workspaceLocalDir: host,
+  });
+  expect(await fs.readFile(path.join(remote, "tracked.txt"), "utf8")).toBe("working-tree bytes\n");
+  expect(await fs.access(completed).then(() => true).catch(() => false)).toBe(false);
+  if (timeoutMs === 8_000) {
+    const child = JSON.parse(await fs.readFile(started, "utf8"));
+    expect(() => process.kill(child.pid, 0)).toThrow();
+    expect(await fs.access(child.index + ".lock").then(() => true).catch(() => false)).toBe(false);
+  }
+  expect((await fs.readdir(path.join(remote, ".git"))).filter(name => name.startsWith(".paperclip-index-") || name === "index.lock")).toEqual([]);
+  await prepared.cleanupWorkspaceSnapshot?.();
+}, 15_000);

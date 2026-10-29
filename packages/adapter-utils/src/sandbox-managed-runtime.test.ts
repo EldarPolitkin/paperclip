@@ -2048,7 +2048,7 @@ describe("sandbox managed runtime", () => {
     ).rejects.toThrow();
   });
 
-  it("issues one merged syncIn operation for a git-backed workspace stage-sync with two ordered extract commands", async () => {
+  it("issues one merged syncIn operation with seed extraction, bounded refresh and overlay in order", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-sandbox-merged-git-"));
     cleanupDirs.push(rootDir);
     const sourceRepoDir = path.join(rootDir, "source-repo");
@@ -2103,16 +2103,15 @@ describe("sandbox managed runtime", () => {
       expect(mapping.targetPath).toContain("/.paperclip-runtime/");
     }
 
-    // Two ordered extract commands: git history first (wipe-except-preserved),
-    // overlay second (merge, no wipe). No deleted paths in this clean worktree.
     const commands = op.postUploadCommands ?? [];
-    expect(commands).toHaveLength(2);
+    expect(commands).toHaveLength(3);
     expect(commands[0].command).toContain("git-workspace-upload.tar");
     expect(commands[0].command).toContain(".paperclip-runtime");
     expect(commands[0].command).toContain("find ");
-    expect(commands[1].command).toContain("workspace-upload.tar");
-    expect(commands[1].command).not.toContain("git-workspace-upload.tar");
-    expect(commands[1].command).not.toContain("find ");
+    expect(commands[1].command).toContain("update-index");
+    expect(commands[2].command).toContain("workspace-upload.tar");
+    expect(commands[2].command).not.toContain("git-workspace-upload.tar");
+    expect(commands[2].command).not.toContain("find ");
 
     // The pre-seeded runtime dir survived and the workspace overlay applied.
     await expect(
