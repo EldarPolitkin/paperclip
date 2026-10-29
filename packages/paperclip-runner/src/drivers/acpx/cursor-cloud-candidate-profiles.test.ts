@@ -71,3 +71,15 @@ describe("branch-only Cursor Cloud identities from 157d4119db48eff9de040d3951755
     }
   });
 });
+
+
+describe("retained Cursor Cloud core profile before semantic planning", () => {
+  it("keeps version 82 byte-identical and decodable without admitting its old launch identity", async () => {
+    const retained = bytes("copilot-profile-v82-identity.json");
+    expect(createHash("sha256").update(retained).digest("hex")).toBe("350564aceac59083b3009c5915c709549f0a257b0d828314184c28cded33e6a6");
+    const identity = JSON.parse(retained.toString("utf8"));
+    expect(isSupportedAcpxProfileVersion("copilot", 82)).toBe(true);
+    expect(identity.commandDigest).not.toBe(QUALIFIED_ACPX_PROFILES.copilot.commandDigest);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot, agentProfileVersion: 82, commandDigest: identity.commandDigest })).rejects.toThrow("exact pinned");
+  });
+});
