@@ -747,13 +747,16 @@ fn terminal_events(
     } else {
         "failed"
     };
-    let terminal = json!({
+    let mut terminal = json!({
         "schema": "paperclip.prp.terminal.v1",
         "provider": provider,
         "turnTerminalState": turn_terminal_state,
         "runTerminalState": if succeeded { "succeeded" } else if cancelled || disposition == "yielded" { "cancelled" } else { "failed" },
         "reportedWorkDisposition": disposition,
     });
+    if unresolved_completion {
+        terminal["workOutcomeReason"] = json!("missing_semantic_result_and_assistant_text");
+    }
     let mut events = Vec::new();
     if state.active_provider_result_fingerprint.is_none() {
         events.push(NormalizedProviderEvent {
@@ -4745,7 +4748,6 @@ impl CommandExecutor for CodexCommandExecutor {
 mod tests {
     include!("tests/opencode_terminal_fallback.rs");
 
-
     #[test]
     fn mcp_permission_requests_use_durable_turn_and_item_identity() {
         let identity = ProviderEventIdentity {
@@ -5297,6 +5299,7 @@ mod tests {
             terminal[0].payload["reportedWorkDisposition"],
             "needs_review"
         );
+        assert!(terminal[0].payload.get("workOutcomeReason").is_none());
         assert!(state.validate().is_ok());
     }
 
@@ -5551,12 +5554,16 @@ mod tests {
             "Completed the requested change."
         );
         assert_eq!(events[0].payload["reportedWorkDisposition"], "done");
-        assert_eq!(events[0].payload["completionClaim"]["objectiveSatisfied"], true);
+        assert_eq!(
+            events[0].payload["completionClaim"]["objectiveSatisfied"],
+            true
+        );
         assert_eq!(
             events[0].payload["evidence"][0]["ref"],
             "provider:opencode:agent-message"
         );
         assert_eq!(events[1].payload["provider"], "opencode");
+        assert!(events[1].payload.get("workOutcomeReason").is_none());
         assert!(!events[0].payload.to_string().contains("Codex"));
     }
 

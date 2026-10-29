@@ -2013,7 +2013,7 @@ export async function commitNativeStatusDecision(input: {
       await tx
         .update(nativeRunFinalizations)
         .set({
-          phase: finalizationError ? "retryable_failure" : "committed",
+          phase: finalizationError?.terminal ? "terminal_failure" : finalizationError ? "retryable_failure" : "committed",
           assessmentId: input.assessmentId,
           decisionId,
           leaseOwner: null,
@@ -2031,7 +2031,7 @@ export async function commitNativeStatusDecision(input: {
                 nextAction: finalizationError.nextAction,
               }
             : null,
-          nextAttemptAt: finalizationError ? new Date(Date.now() + 30_000) : null,
+          nextAttemptAt: finalizationError && !finalizationError.terminal ? new Date(Date.now() + 30_000) : null,
           updatedAt: new Date(),
         })
         .where(eq(nativeRunFinalizations.runId, input.runId));

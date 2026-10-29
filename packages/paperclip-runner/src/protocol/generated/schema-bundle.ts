@@ -3581,6 +3581,12 @@ export const terminalSchema = {
         "yielded"
       ]
     },
+    "workOutcomeReason": {
+      "description": "Machine-produced observation; transport success does not establish a work outcome.",
+      "enum": [
+        "missing_semantic_result_and_assistant_text"
+      ]
+    },
     "workAssessmentId": {
       "type": "string",
       "minLength": 1
