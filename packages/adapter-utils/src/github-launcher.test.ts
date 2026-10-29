@@ -20,7 +20,6 @@ describe("managed GitHub launchers", () => {
     await writeFile(path.join(repo, "tracked.txt"), "staged contents\n");
     await exec("git", ["-C", repo, "add", "tracked.txt"]);
     const expectedTree = (await exec("git", ["-C", repo, "write-tree"])).stdout;
-    await writeFile(path.join(repo, "tracked.txt"), "unstaged contents\n");
     await writeFile(path.join(bin, "git"), githubLauncherSource(), { mode: 0o700 });
     let captures = 0;
     const server = createServer((_req, res) => {
@@ -33,6 +32,8 @@ describe("managed GitHub launchers", () => {
     const { port } = server.address() as { port: number };
     const env = { ...process.env, ...githubBrokerEnvironment({}, { url: `http://127.0.0.1:${port}`, token: "run-capability" }), PATH: `${bin}:${process.env.PATH}` };
     const git = (...args: string[]) => exec(path.join(bin, "git"), args, { cwd: root, env });
+    await git("-C", repo, "-c", "core.fsmonitor=false", "update-index", "--refresh");
+    await writeFile(path.join(repo, "tracked.txt"), "unstaged contents\n");
     const tree = await git("--git-dir", path.join(repo, ".git"), "--work-tree", repo, "write-tree");
     const diff = await git("-C", repo, "-c", "core.quotepath=false", "diff-files", "--name-only", "-z", "--", ".");
     expect(tree.stdout).toBe(expectedTree);

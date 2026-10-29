@@ -62,6 +62,7 @@ it.each([
     await fs.mkdir(cwd, { recursive: true });
     await git(cwd, "init", "-q", "-b", "main");
     await fs.writeFile(path.join(cwd, "tracked.txt"), "committed bytes\n");
+    await fs.writeFile(path.join(cwd, "clean.txt"), "unchanged committed bytes\n");
     await fs.writeFile(path.join(cwd, "deleted.txt"), "delete in host\n");
     await fs.writeFile(path.join(cwd, ".gitignore"), "secret.txt\n.paperclip-repositories/\n");
     await fs.symlink("tracked.txt", path.join(cwd, "link.txt"));
@@ -123,6 +124,14 @@ it.each([
   };
   const first = await prepare("first", "issue/first");
   const second = await prepare("second", secondBranch);
+  for (const staged of [first, second]) for (const relative of repositories) {
+    const cwd = path.join(staged.remote, relative);
+    const indexed = await git(cwd, "ls-files", "--debug", "--", "clean.txt");
+    const ctime = /ctime: (\d+):(\d+)/.exec(indexed);
+    expect(ctime).not.toBeNull();
+    const stat = await fs.stat(path.join(cwd, "clean.txt"), { bigint: true });
+    expect(BigInt(ctime![1]!) * 1_000_000_000n + BigInt(ctime![2]!)).toBe(stat.ctimeNs);
+  }
   for (const relative of repositories) {
     const cwd = path.join(second.remote, relative);
     expect(await git(cwd, "rev-parse", "--abbrev-ref", "HEAD")).toBe(secondBranch ?? "HEAD");
@@ -190,4 +199,28 @@ it("separates shared seeds when file contents, Git head, origin or repository la
   const second = await captureDirectorySnapshot(root);
   expect(workspaceSeedGeneration(second, git, [], "company")).not.toBe(generation);
   await disposeDirectorySnapshot(first); await disposeDirectorySnapshot(second);
+});
+
+it("stages the working tree when the destination index refresh fails", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-index-refresh-failure-"));
+  roots.push(root);
+  const host = path.join(root, "host"), remote = path.join(root, "remote"), bin = path.join(root, "bin");
+  await fs.mkdir(host); await fs.mkdir(bin);
+  await git(host, "init", "-q", "-b", "main");
+  await fs.writeFile(path.join(host, "tracked.txt"), "committed bytes\n");
+  await git(host, "add", ".");
+  await git(host, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "Seed");
+  const head = await git(host, "rev-parse", "HEAD");
+  await fs.writeFile(path.join(host, "tracked.txt"), "working-tree bytes\n");
+  const realGit = (await exec("which", ["git"])).stdout.trim(), marker = path.join(root, "attempted");
+  await fs.writeFile(path.join(bin, "git"), `#!${process.execPath}\nconst fs=require('node:fs'),cp=require('node:child_process');const args=process.argv.slice(2);if(args.includes('update-index')){fs.writeFileSync(${JSON.stringify(marker)},'attempted');process.exit(42)}const child=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(child.status??1);\n`, { mode: 0o700 });
+  vi.stubEnv("PATH", bin + path.delimiter + process.env.PATH);
+  const prepared = await prepareSandboxManagedRuntime({
+    spec: { transport: "sandbox", provider: "filesystem", sandboxId: "refresh-failure", remoteCwd: remote, timeoutMs: 30_000, apiKey: null },
+    adapterKey: "test", client: client(), workspaceLocalDir: host,
+  });
+  expect(await fs.readFile(marker, "utf8")).toBe("attempted");
+  expect(await fs.readFile(path.join(remote, "tracked.txt"), "utf8")).toBe("working-tree bytes\n");
+  expect(await git(remote, "rev-parse", "HEAD")).toBe(head);
+  await prepared.cleanupWorkspaceSnapshot?.();
 });

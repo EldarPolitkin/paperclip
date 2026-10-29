@@ -708,6 +708,27 @@ function buildWorkspaceTarExtractCommand(input: {
   );
 }
 
+function buildWorkspaceGitIndexRefreshCommand(input: {
+  workspaceRemoteDir: string;
+  git: GitWorkspaceSnapshot | null;
+  repositories: NonNullable<GitWorkspaceSnapshot["repositories"]>;
+}): string {
+  const directories = new Set<string>();
+  const visit = (relative: string, snapshot: GitWorkspaceSnapshot) => {
+    directories.add(path.posix.join(input.workspaceRemoteDir, relative));
+    for (const repository of snapshot.repositories ?? []) child(relative, repository);
+  };
+  const child = (relative: string, repository: (typeof input.repositories)[number]) => {
+    if (path.posix.isAbsolute(repository.path) || repository.path.split("/").includes("..")) throw new Error("workspace_seed_git_path_invalid");
+    visit(path.posix.join(relative, repository.path), repository.snapshot);
+  };
+  if (input.git) visit("", input.git);
+  else for (const repository of input.repositories) child("", repository);
+  return [...directories].map(directory =>
+    `(git -C ${shellQuote(directory)} -c core.fsmonitor=false update-index --refresh >/dev/null 2>&1 || true)`,
+  ).join(" && ");
+}
+
 // Named builder (C3): remove paths deleted in the host git worktree from the
 // sandbox workspace. Every path is shell-quoted; the caller supplies only
 // already-confined relative paths from the git snapshot.
@@ -1655,7 +1676,7 @@ export async function prepareSandboxManagedRuntime(input: {
                   workspaceRemoteDir,
                   remoteTar: remoteGitTar,
                   wipeExceptNames: [".paperclip-runtime"],
-                }),
+                }) + " && " + buildWorkspaceGitIndexRefreshCommand({ workspaceRemoteDir, git: gitSnapshot, repositories }),
               });
               workspaceUploadBytes += (await fs.stat(gitTarPath)).size;
             }
