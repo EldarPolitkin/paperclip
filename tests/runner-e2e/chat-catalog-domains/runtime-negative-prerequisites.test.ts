@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import path from "node:path";
 import { getEnvironmentCapabilities } from "../../../packages/shared/src/environment-support.js";
 import { authorizeManualPrivateEvidence, MANUAL_PRIVATE_PROTOCOL } from "../manual-private-retention.js";
@@ -6,6 +6,9 @@ import { cleanupNegativeRuntimeChoices } from "./runtime-negative-prerequisites.
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 import { runtimeClaudeAccountCases } from "./runtime-claude-account.js";
 import { runtimeCloudChoiceCases } from "./runtime-cloud-choice.js";
+import { prepareOwnedDaytonaSdk } from "./runtime-negative-plugin-sdk.js";
+vi.mock("./runtime-negative-plugin-sdk.js", () => ({ prepareOwnedDaytonaSdk: vi.fn(async () => {}) }));
+beforeEach(() => vi.clearAllMocks());
 function cloudCapabilities() {
   return getEnvironmentCapabilities(["claude_local", "paperclip_runner"], { sandboxProviders: { daytona: {
     status: "supported", source: "plugin", pluginKey: "paperclip.daytona-sandbox-provider", pluginId: "daytona-id", supportsRunExecution: true,
@@ -50,6 +53,7 @@ it.each(["foreignExecution", "expired"])("actual selected setup rejects %s befor
   if (invalid === "expired") Object.assign(f.ctx, { observationDeadlineAt: Date.now() - 1 });
   else f.ctx.input.execution.id = "chat-features.runner-codex.local.agents.ambiguous-cloud-code";
   await expect(runtimeCloudChoiceCases[0]!.setup(f.ctx)).rejects.toThrow(); expect(f.api.get).not.toHaveBeenCalled(); expect(f.api.post).not.toHaveBeenCalled();
+  expect(prepareOwnedDaytonaSdk).not.toHaveBeenCalled();
 });
 function pluginFixture(existing = false, fail = false) {
   const f = fixture("agents.ambiguous-cloud-code"), read = f.api.get.getMockImplementation()!;
@@ -67,6 +71,7 @@ function pluginFixture(existing = false, fail = false) {
 it("actual ambiguity setup can register the bundled provider and owns only its local plugin cleanup, with no environment, secret or probe call", async () => {
   const f = pluginFixture(); const result = await runtimeCloudChoiceCases[0]!.setup(f.ctx);
   expect(result.cloudAvailable).toBe(true); expect(f.api.post).toHaveBeenCalledExactlyOnceWith("/api/plugins/install", { packageName: f.plugin.packagePath, isLocalPath: true }, expect.objectContaining({ timeout: expect.any(Number) }));
+  expect(prepareOwnedDaytonaSdk).toHaveBeenLastCalledWith(path.resolve(f.plugin.packagePath, "../../../.."), f.ctx.observationDeadlineAt);
   await cleanupNegativeRuntimeChoices(f.ctx); expect(f.api.delete).toHaveBeenCalledExactlyOnceWith(`/api/plugins/${f.plugin.id}`, { allowNotFound: true });
 });
 it("actual ambiguity setup never replaces or removes an existing failed plugin", async () => {

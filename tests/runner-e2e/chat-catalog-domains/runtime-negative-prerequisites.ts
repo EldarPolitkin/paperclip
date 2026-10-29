@@ -6,6 +6,7 @@ import type { EnvironmentCapabilities } from "../../../packages/shared/src/envir
 import type { PluginRecord } from "../../../packages/shared/src/types/plugin.js";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 import { pollUntil } from "../api.js";
+import { prepareOwnedDaytonaSdk } from "./runtime-negative-plugin-sdk.js";
 
 interface AdapterChoice { type: string; loaded: boolean; disabled: boolean; supportedRunners: string[] }
 export interface NegativeRuntimeChoices {
@@ -61,6 +62,8 @@ export async function readNegativeRuntimeChoices(ctx: ChatCatalogContext, cloud:
       const before = await read<PluginRecord[]>("/api/plugins");
       let plugin = before.find(row => row.pluginKey === pluginKey);
       if (!plugin) {
+        await prepareOwnedDaytonaSdk(path.resolve(pluginRoot, "../../../.."), ctx.observationDeadlineAt!);
+        remaining(ctx);
         plugin = await api.post<PluginRecord>("/api/plugins/install", { packageName: pluginRoot, isLocalPath: true }, { timeout: remaining(ctx) });
         if (!plugin.id || plugin.pluginKey !== pluginKey || before.some(row => row.id === plugin!.id)) throw new Error("Public plugin installation did not establish an owned Daytona choice");
         installed.set(ctx, plugin.id);
