@@ -86,10 +86,23 @@ async function withCopilotTestPlatform<T>(arch: "x64" | "arm64", run: () => Prom
 vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi.fn() }));
 
 describe("Copilot build-owned installation", () => {
+  it("preserves v81 decoding while binding the managed-command environment in v82", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v81-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("8b9d6b0e7ba3bb34141275f1a62701c3b69e1e917260d3c9984fbaeba6d413b1");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v82-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "configuredEnvironmentRustSourceSha256", "credentialBindingSourceSha256", "profileCompatibilitySourceSha256", "providerLaunchSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 81)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("grok", 12)).toBe(true);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+      agentProfileVersion: 81, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
+  });
   it("admits the current profile with environment launch preparation", () => {
     expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(82);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:a51bdf77bba778c4d0265bbfd92a0e6c146f9de5debc3b4a2a268c34e5576e0c");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:bb4fed5ef76161172054c87e6850f3e76298e15d85348bdb91b4d324182b0c9e");
   });
 
 it("preserves published v65 while binding retained-maintenance waits in v66", async () => {
