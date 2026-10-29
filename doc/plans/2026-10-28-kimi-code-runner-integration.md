@@ -60,13 +60,24 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Scoped tools and credentials | local and Daytona | Native v6 credential fences passed; the first pending11 Daytona task received its exact full scoped context result and reached the intended unanswered Write | partial |
 | Ordinary setup | installed local and isolated hosted test | Ordinary connect/save/reopen/Test/run/reconnect and assigned-skill behavior remain required | unattempted |
 | Useful task | local and Daytona | Historical profile9 local files/downloads and one Daytona message passed; pending11 useful-task cells remain | partial |
-| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; both pending11 Daytona attempts failed in fixture checks before Stop was submitted | partial |
-| Continuation and child loss | local and Daytona | Historical local restart/question/loss/follow-up cells passed; pending11 requires a fresh full matrix | partial |
+| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; local and Daytona pending11 native Write Stop passed; semantic lifecycle cells remain | partial |
+| Continuation and child loss | local and Daytona | pending11 local native worker loss passed; remaining restart/question/loss/follow-up cells require current coverage | partial |
 | Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
 | Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the recovery guard passed 65 module tests and selected assembled controls; selector regressions and targeted typechecks passed; final full checks remain | partial |
 
 Current pending11 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
-The current twenty-cell matrix has no passing cells yet. Profile9 results remain
+The current twenty-cell matrix has four passing cells on frozen Core/source
+`0ca0d6b87d6d69b8a900621fb834ed74cb1ae446`, pending Kimi11 and suite V4:
+local native Write Stop, local native worker loss, local message-marker, and
+Daytona native Write Stop. Their original reports retain that identity; sixteen
+cells remain. Original failed attempts remain failed. The fixture-only V5 successor
+clarifies Plan marker formatting and expands detailed run evidence without
+changing their task prompts, graders, Core, native closures, or immutable image.
+The remote observer source hash changes with its new diagnostics and remains an
+explicit test-identity derivative in the scoped context; full model-facing byte
+equality is not claimed. Original Stop did not invoke the fault branch, common
+observer functions remain unchanged, and fresh authenticated worker-loss coverage
+through the new observer is required before final acceptance. Profile9 results remain
 historical support. These grouped gates do not replace per-cell evidence.
 
 The explicit-only `kimi-qualification` Product E2E suite has 20 required cells:
@@ -101,6 +112,10 @@ Assigned-skill behavior and ordinary connect/save/reopen/Test/run/reconnect rema
 separate requirements, including the requested hosted test workspace.
 
 ## Current state
+
+Four current cells passed with independently checked report hashes, native profile/model identity, terminal state, and cleanup. Local Plan acceptance then stopped because the model omitted the required draft marker in its actual `write_document` input; saved bytes, API reads, and the Plan UI matched that input. The strict marker and revision/approval checks remain. A fixture-only successor makes the literal first-line format explicit and increments the Kimi definition to V5; a later passing response does not establish reliability or alter the original failure.
+
+The first current Daytona worker-loss attempt failed inside its one-shot fault observer. Its original diagnostic erased the failing guard and cannot establish whether a signal occurred. A separate no-network Linux x64 control used the immutable image, actual Kimi and compiled ACPX, and a simulated model. Python 3.13.5 process-handle signaling and all fourteen Linux selector controls passed. The real pending Write was reached, then inspection failed with a missing-file error before any fault signal. Normal Stop retired all seven owned processes, and both controllers independently verified the sandbox absent before the temporary key was revoked. This is diagnostic evidence, not authenticated task acceptance. A second inspect-only control located the exact read: the selector resolved the authenticated parent executable to a deleted Linux memfd alias, then tried to reopen that name instead of its held descriptor. It failed before signaling. Its normal Stop retired all seven processes, and sandbox deletion and key revocation were independently verified. The descriptor correction then passed a same-process Linux comparison: the old selector reproduced that exact error, the corrected selector verified the held executable and its kernel seals, and the unchanged process-handle operation killed only the owned native Kimi child. The unanswered permission expired with `provider_process_lost` and replay disabled; a correctly scoped stale approval failed, no file effect or second model request occurred, and all seven owned processes retired. Sandbox deletion and temporary-key revocation passed independently. All model responses in these controls were simulated. Fresh authenticated worker-loss acceptance remains required.
 
 Pending Kimi11 and Copilot83 are frozen after the actual lock-refresh prerequisite
 was merged. The prerequisite's squash commit has the same complete tree as the
