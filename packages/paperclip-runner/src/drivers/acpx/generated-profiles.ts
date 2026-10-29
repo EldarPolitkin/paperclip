@@ -9,12 +9,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "grok",
-    "agentProfileVersion": 13,
+    "agentProfileVersion": 14,
     "agentServerPackage": "builtin:grok-acp",
     "agentServerVersion": "1",
     "agentRuntimePackage": "native:grok",
     "agentRuntimeVersion": "1.0.13",
-    "commandDigest": "sha256:1548a43dc572dd4614f4bcc681140b5de1997c44a32b1961644739aea3fcc564",
+    "commandDigest": "sha256:451884f84a6850bb65ba078141dfb148c92754a6278cf77fe94007071fed1e37",
     "permissionPolicy": "interactive"
   },
   "pi": {
@@ -22,12 +22,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "pi",
-    "agentProfileVersion": 34,
+    "agentProfileVersion": 35,
     "agentServerPackage": "pi-acp",
     "agentServerVersion": "0.0.33",
     "agentRuntimePackage": "@earendil-works/pi-coding-agent",
     "agentRuntimeVersion": "1.0.0",
-    "commandDigest": "sha256:ed4b32cc8fbf36309d38b3bd378f41f8e7b9e96a2405d275cc55e89042d94c7f",
+    "commandDigest": "sha256:ac258a7f7f29e4f39acca37878bed03022db17af7955634b1a75f59d46cbb23c",
     "permissionPolicy": "interactive"
   },
   "cursor": {
@@ -53,7 +53,7 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "agentServerVersion": "1.0.88",
     "agentRuntimePackage": null,
     "agentRuntimeVersion": null,
-    "commandDigest": "sha256:25eb0275350fe55e2e41e5ae6963b83ba02119e6530c8a5a7471a28297087831",
+    "commandDigest": "sha256:c893ccc76daf952ddd08dc572b0433712cc54996e78dd26d55de3a6d626b6e74",
     "permissionPolicy": "interactive"
   },
   "claude": {
