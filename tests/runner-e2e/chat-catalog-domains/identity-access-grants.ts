@@ -120,7 +120,7 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
   } catch (error) { await alex.dispose(); people.delete(ctx); throw error; }
 }, gradeAccessGrant, {
   sourceFiles: [...sources, ...(scenarioId.endsWith("invite-teammate") ? ["chat-catalog-domains/identity-invite-grant-setup.ts", "chat-catalog-domains/identity-invite-capability-binding.ts", "invitation-private-capability.ts", "sanitized-json-writer.ts"] : [])], authentication: "human-session",
-  coverageGaps: scenarioId.endsWith("invite-teammate") ? ["invitation-shared-private-retention-hooks-and-policy-unadmitted"] : ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
+  coverageGaps: scenarioId.endsWith("invite-teammate") ? ["invitation-trusted-retention-policy-unadmitted"] : ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
   async observe(ctx, state) {
     if (scenarioId.endsWith("invite-teammate")) {
       state.invitations = (await ctx.input.api.get<{ invites: Invitation[] }>(`/api/companies/${ctx.input.fixtures.company.id}/invites`)).invites.filter(row => !(state.invitationsBefore as string[]).includes(row.id));

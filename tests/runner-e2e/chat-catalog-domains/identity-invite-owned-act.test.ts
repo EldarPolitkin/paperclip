@@ -48,7 +48,7 @@ async function fixture(roleQuestion = false, selected = true) {
     renderedLinkEvidence: roleQuestion ? [] : [{ threadTestId: "task-chat-thread", href, source: "reply", conversationId: "chat", commentId: "reply", anchorCommentId: "reply" }],
     interactions: roleQuestion ? [{ kind: "ask_user_questions", status: "pending", companyId: "company", createdByAgentId: "ceo", sourceRunId: "run", payload: { questionSet: { questions: [{ prompt: "What role should Alex have: viewer or operator?" }] } } }] : [],
   }));
-  return { ctx, state, roots, token, invite, activity, gets };
+  return { ctx, state, roots, token, invite, activity, reply, gets };
 }
 it("actual act keeps genuine Alex acceptance/reuse after public capability proof without credential conflation", async () => {
   const f = await fixture(); await implementation.act!(f.ctx, f.state);
@@ -77,5 +77,12 @@ it("missing fixed scope stops actual setup before creating any person or authori
 it("keeps nonselected invitation credential handling conservative", async () => {
   const f = await fixture(false, false); await implementation.act!(f.ctx, f.state);
   expect(f.roots).toContain(f.token); expect(mocked.requests).toHaveLength(2);
+  await implementation.cleanup!(f.ctx, f.state);
+});
+
+it("actual public reply credential shape fails before enrollment or acceptance", async () => {
+  const f = await fixture(); f.reply.body += " sk-proj-syntheticUnknownCredential123456789";
+  await expect(implementation.act!(f.ctx, f.state)).rejects.toThrow(/Secret leak/);
+  expect(mocked.guard).not.toHaveBeenCalled(); expect(mocked.requests).toEqual([]);
   await implementation.cleanup!(f.ctx, f.state);
 });

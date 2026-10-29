@@ -640,8 +640,9 @@ Alex acceptance/reuse checks. It is not added to the credential registry.
 Approved original capture files retain their ordinary contents; optional
 capability projection is not used to replace required evidence.
 
-This owned stage is not runnable qualification. Parent launcher/diagnostic/fallback
-retention hooks must be composed from their separately reviewed source. The
-trusted restricted-retention policy still supports eight other exact cases and
+The target composes the separately reviewed parent retention hooks and fixed
+invitation diagnostic/fallback handling. Optional evaluator trace export is off
+for this case; product logs, ordinary usage and real credential guards remain.
+This is not runnable qualification. The trusted policy still supports eight other exact cases and
 rejects invitation. Future operator-reviewed source-policy deployment and exact
 run approval remain required; Actions artifacts are not private storage.

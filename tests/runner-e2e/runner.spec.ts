@@ -622,7 +622,7 @@ for (const execution of executions) {
     const secrets = trackedPrivateSecrets(normalizedSecrets([...Object.values(credentials), ...EVAL_OBSERVABILITY_SECRET_NAMES.map(name => process.env[name]), process.env.PAPERCLIP_E2E_GATEWAY_TOKEN]), execution.id);
     if (invitationScope) bindInvitationEvidenceWriter(invitationScope, secrets);
     const privateInputs = execution.suite.id === "chat-features" ? readChatPrivateInputs(execution.id, secrets) : undefined;
-    const traceConfig = evalBraintrustConfig(process.env);
+    const traceConfig = invitationScope ? undefined : evalBraintrustConfig(process.env);
     const trace = traceConfig ? new EvalAttemptTrace(traceConfig, {
       campaignId: process.env.PAPERCLIP_E2E_ACCOUNTING_CAMPAIGN_ID ?? "",
       attemptId: process.env.PAPERCLIP_E2E_ACCOUNTING_ATTEMPT_ID ?? "",

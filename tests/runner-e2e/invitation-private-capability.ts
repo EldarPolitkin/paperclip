@@ -3,9 +3,8 @@ import { diagnosticSecrets } from "./private-diagnostics.js";
 import { assertSecretFree, findSecretLeakInJsonValues, sanitizeJson } from "./redaction.js";
 import type { RunnerE2EResult } from "./types.js";
 
-/** Owned invitation case/writer stage. Parent launcher/fallback/private-retention
- * integration remains a separate reviewed prerequisite; this module alone does
- * not admit an invitation execution or widen the trusted eight-case policy. */
+/** Fixed invitation privacy owner. Its reviewed target-side hooks do not admit
+ * an invitation execution or widen the trusted eight-case workflow policy. */
 export const INVITATION_PRIVATE_EXECUTION = "chat-features.runner-opencode.local.access.invite-teammate";
 const PRIVATE_LINK = "[private one-time invitation capability]";
 interface Declaration { executionId: typeof INVITATION_PRIVATE_EXECUTION; attempt: number; sourceSha: string }
@@ -147,13 +146,19 @@ export function projectInvitationJsonForWriter(scope: InvitationEvidenceScope, n
   if (leak || bound && hasCapability(JSON.stringify(safe), bound)) throw new Error("Invitation projection contains private material");
   return safe;
 }
+/** Called only with bytes already emitted by the ordinary genuine-secret
+ * diagnostic scanner. The private standard log keeps those same bytes. */
+export function invitationDiagnosticRecord(scope: InvitationEvidenceScope, scannedText: string) {
+  state(scope);
+  return { privateText: scannedText, publicText: "[private invitation diagnostics withheld from external output]\n" };
+}
 /** Entire diagnostic streams are withheld, even before registration. The
  * existing real-credential stream scanner must execute first and its leak/fail
  * verdict remains authoritative; this separate disposition is NOT secret_leak. */
 export function invitationDiagnosticDisposition(scope: InvitationEvidenceScope, credentialScan: { failed: boolean; redactedSecret: boolean }) {
   state(scope);
   if (credentialScan.failed || credentialScan.redactedSecret) throw new Error("Invitation diagnostics failed the real credential boundary");
-  return { disposition: "private-capability-diagnostics-withheld" as const, publicText: "[invitation diagnostics retained privately]\n" };
+  return { disposition: "private-capability-diagnostics-withheld" as const, publicText: "[invitation diagnostics withheld from external output]\n" };
 }
 /** A predeclared fixed case always remains private, even with zero registration
  * or an early launcher failure. Preserve exact matcher IDs/verdicts: the old

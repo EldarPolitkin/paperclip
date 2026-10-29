@@ -31,7 +31,7 @@ it("binds actual visible/public custody without registering the invitation as a 
   expect(f.calls).toEqual(["/api/issues/chat/comments?order=asc", "/api/companies/company/activity?limit=1000"]);
   await expect(bindActualInvitationCapability(f.ctx, f.observation, f.invite, [])).rejects.toThrow(/limited to one/);
 });
-it.each(["person", "query", "company", "hash", "actor", "comment-run", "source", "anchor", "foreign-link", "setup-run", "credential-collision"])("rejects %s before token-path acceptance", async kind => {
+it.each(["person", "query", "company", "hash", "actor", "comment-run", "source", "anchor", "foreign-link", "setup-run", "credential-collision", "reply-root", "reply-unknown-shape"])("rejects %s before token-path acceptance", async kind => {
   const f = fixture();
   if (kind === "person") f.human.authorUserId = "foreign";
   if (kind === "query") f.human.body = "Other request";
@@ -43,6 +43,8 @@ it.each(["person", "query", "company", "hash", "actor", "comment-run", "source",
   if (kind === "anchor") f.link.anchorCommentId = "foreign";
   if (kind === "foreign-link") f.link.href = f.link.href.replace("127.0.0.1", "foreign.invalid");
   if (kind === "credential-collision") f.roots.push(f.token);
+  if (kind === "reply-root") f.reply.body += ` ${f.roots[0]}`;
+  if (kind === "reply-unknown-shape") f.reply.body += " sk-proj-syntheticUnknownCredential123456789";
   await expect(bindActualInvitationCapability(f.ctx, f.observation, f.invite, kind === "setup-run" ? ["run"] : [])).rejects.toThrow();
 });
 it("requires the actual authenticated person and a typed case scope", async () => {

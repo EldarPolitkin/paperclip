@@ -1,4 +1,4 @@
-import { registerInvitationCapability, type InvitationCapabilityProof } from "../invitation-private-capability.js";
+import { assertInvitationRawEvidence, registerInvitationCapability, type InvitationCapabilityProof } from "../invitation-private-capability.js";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 import type { IdentityObservation } from "./identity-support.js";
 
@@ -34,11 +34,13 @@ export async function bindActualInvitationCapability(ctx: ChatCatalogContext, ob
   if (humans.length !== 1 || replies.length !== 1 || sourceRuns.length !== 1 || creations.length !== 1)
     throw new Error("Invitation public source custody is missing or ambiguous");
   const run = sourceRuns[0]!;
-  registerInvitationCapability(scope, { origin, expected: { companyId, agentId, issueId, humanId,
+  const proof: InvitationCapabilityProof = { origin, expected: { companyId, agentId, issueId, humanId,
     query: ctx.scenario.query, setupRunIds }, invite, human: humans[0]!, comment: replies[0]!, activity: creations[0]!,
     run: { ...run, runtimeMode: run.runtimeMode ?? "", startedAt: run.startedAt ?? "",
       contextSnapshot: { issueId: typeof run.contextSnapshot?.issueId === "string" ? run.contextSnapshot.issueId : "" } },
     renderedLink: { ...link, commentId: link.commentId ?? "" },
-  }, ctx.input.privateSecrets);
+  };
+  assertInvitationRawEvidence(scope, "invitation-public-custody", proof, ctx.input.privateSecrets);
+  registerInvitationCapability(scope, proof, ctx.input.privateSecrets);
   return new URL(link.href, origin).pathname.slice("/invite/".length);
 }

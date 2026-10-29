@@ -1,3 +1,4 @@
+import { declareSelectedInvitationEvidence, invitationDiagnosticRecord, invitationDiagnosticDisposition, invitationPrivateResultEnvelope, INVITATION_PRIVATE_EXECUTION, type InvitationEvidenceScope } from "./invitation-private-capability.js";
 import { withholdPrivateScreenshots } from "./screenshot-privacy.js";
 import { copyHealthHelloDetail } from "./chat-readiness-detail.js";
 import { copyRetainedSourceSdk } from "./source-sdk-evidence.js";
@@ -47,6 +48,8 @@ import {
 import { isImmutableDaytonaImage, runnerMatrix } from "./catalog.js";
 import { renderRunnerE2EDashboard } from "./dashboard.js";
 import { packageEvidence } from "./evidence.js";
+import { readManualPrivateHandoff, sealManualResultEvidence, preserveOriginalFrameworkResult, sealStandardOriginalEvidence, type ManualPrivateHandoff } from "./manual-private-handoff.js";
+import { requiresPrivateManualEvidence, manualCellKind } from "./manual-private-retention.js";
 import { classifyFailure } from "./failure-classifier.js";
 import { mustPreserveRecoveryState, shouldKeepFailedDiagnostics } from "./cleanup-verification.js";
 import { effectiveAutomaticRetryLimit, executeWithAutomaticRetry } from "./automatic-retry.js";
@@ -102,7 +105,22 @@ import {
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const localEnvPath = path.join(repositoryRoot, ".env.runner-e2e.local");
-const resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
+let resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
+let manualPrivateHandoff: ManualPrivateHandoff | undefined;
+const manualEvidenceSecrets = new Set<string>();
+let manualEvidenceFailure: Error | undefined;
+let invitationInvocationScope: InvitationEvidenceScope | undefined;
+
+/** Reuse the existing durable case registry, including registrations made after
+ * the worker starts. Failure must stop sealing, never certify only env roots. */
+export function refreshManualEvidenceRoots(registry: string | undefined, temporaryRoot: string, roots: string[], retained: Set<string>) {
+  const registered = registry ? readPrivateDiagnosticSecrets(registry, temporaryRoot) : [];
+  // Reloading the worker carrier must not discard a root already observed by
+  // this attempt. The original scan/sealer needs the same accumulated set as
+  // the final result sealer, even if a valid carrier regresses or is absent.
+  roots.splice(0, roots.length, ...normalizedSecrets([...retained, ...roots, ...registered]));
+  for (const root of roots) retained.add(root);
+}
 const activeProcessGroups = new Set<number>();
 const activeProcessCleanup = new Map<number, Promise<string | null>>();
 const activeProcessTerminators = new Map<number, () => void>();
@@ -297,6 +315,7 @@ async function runProcess(
   completionPaths: readonly string[],
   interactive: boolean,
   secrets: () => readonly string[],
+  invitationScope?: InvitationEvidenceScope,
 ) {
   const log = createWriteStream(logPath, { flags: "a", mode: 0o600 });
   const child = spawn(invocation.command, invocation.args, {
@@ -310,9 +329,10 @@ async function runProcess(
   const processOwner = createProcessTreeOwner(child);
   let outputTail = "";
   const recordOutput = (safe: string, destination: NodeJS.WriteStream) => {
-    destination.write(safe);
-    log.write(safe);
-    outputTail += safe;
+    const record = invitationScope ? invitationDiagnosticRecord(invitationScope, safe) : { privateText: safe, publicText: safe };
+    log.write(record.privateText);
+    destination.write(record.publicText);
+    outputTail += record.publicText;
     if (outputTail.length > 1024 * 1024)
       outputTail = outputTail.slice(-1024 * 1024);
   };
@@ -489,9 +509,10 @@ async function runAttempt(input: {
   const { executions, attempt, campaignId, options } = input;
   const accountingCampaignId = input.operations?.manifest.limits.campaignId ?? process.env.PAPERCLIP_E2E_ACCOUNTING_CAMPAIGN_ID ?? campaignId;
   const accountingAttemptId = randomBytes(16).toString("hex");
-  const traceConfig = evalBraintrustConfig({ ...process.env, PAPERCLIP_E2E_OTLP_RELAY_URL: undefined });
   const execution = executions[0];
   if (!execution) throw new Error("A runner E2E cell must contain a task case");
+  const invitationScope = declareSelectedInvitationEvidence(execution.id, attempt, resolveRunnerE2ESource().sha ?? "");
+  const traceConfig = invitationScope ? undefined : evalBraintrustConfig({ ...process.env, PAPERCLIP_E2E_OTLP_RELAY_URL: undefined });
   if (
     executions.some(
       (candidate) =>
@@ -503,6 +524,8 @@ async function runAttempt(input: {
       "One isolated runner E2E harness cannot mix profiles or environments",
     );
   }
+  if (process.env.GITHUB_ACTIONS === "true" && executions.some(candidate => requiresPrivateManualEvidence(candidate.id)) && !manualPrivateHandoff)
+    throw new Error("Sensitive GHA evidence requires verified restricted retention before setup");
   assertInstalledCliSelection(process.env, executions);
   let installedCli = await verifyInstalledCli(process.env, executions);
   const selectedDescriptor = execution.suite.id === "chat-features" ? findChatCatalogCase(execution.task.id) : undefined;
@@ -514,10 +537,32 @@ async function runAttempt(input: {
   const sharedMemoryBaseline = snapshotDarwinSharedMemory();
   const temporaryParent = await realpath(os.tmpdir());
   const temporaryRoot = await createRunnerE2ETemporaryRoot(temporaryParent);
+  const privateDir = manualPrivateHandoff ? path.join(manualPrivateHandoff.root, "capture") : path.join(temporaryRoot, "artifacts-private");
   const selectedPrivateInputsDirectory = path.join(temporaryRoot, "selected-private-inputs");
   const publishedResults: RunnerE2EResult[] = [];
   const publishedResultPaths = new Map<string, string>();
   let attemptSecrets: string[] = [];
+  let diagnosticRegistry: string | undefined;
+  const originalFrameworkPreserved = new Set<string>();
+  const originalSealAttempted = new Set<string>();
+  const originalPackageScans = new Map<string, { evidence: Awaited<ReturnType<typeof packageEvidence>>; passed: boolean }>();
+  const refreshManualRoots = () => {
+    if (!manualPrivateHandoff) return;
+    try { refreshManualEvidenceRoots(diagnosticRegistry, temporaryRoot, attemptSecrets, manualEvidenceSecrets); }
+    catch { manualEvidenceFailure = new Error("Private diagnostic roots unavailable; evidence cannot be sealed"); }
+  };
+  const preserveManualOriginal = async (id: string, directory: string) => {
+    if (!manualPrivateHandoff || originalFrameworkPreserved.has(id)) return;
+    await preserveOriginalFrameworkResult(directory); originalFrameworkPreserved.add(id);
+  };
+  const sealManualOriginal = async (candidate: MatrixExecution, directory: string, evidence: Awaited<ReturnType<typeof packageEvidence>>, passed: boolean) => {
+    if (!manualPrivateHandoff || originalSealAttempted.has(candidate.id)) return;
+    originalSealAttempted.add(candidate.id);
+    try {
+      if (manualEvidenceFailure) throw manualEvidenceFailure;
+      await sealStandardOriginalEvidence({ context: manualPrivateHandoff, executionId: candidate.id, source: directory, evidence, secrets: attemptSecrets, expectPassScreenshot: passed });
+    } catch { manualEvidenceFailure = new Error("Private original evidence sealing failed; no public fallback"); throw manualEvidenceFailure; }
+  };
   let processCleanupFailed = false;
   let startupReceiptPath: string | undefined;
   let dockerDatabase: Awaited<ReturnType<typeof startOwnedDockerDatabase>> | undefined;
@@ -528,7 +573,6 @@ async function runAttempt(input: {
   try {
     const paperclipHome = path.join(temporaryRoot, "paperclip-home");
     const workspace = path.join(temporaryRoot, "workspace");
-    const privateDir = path.join(temporaryRoot, "artifacts-private");
     const instanceId = `runner-e2e-${randomBytes(8).toString("hex")}`;
     const configPath = path.join(
       paperclipHome,
@@ -571,6 +615,7 @@ async function runAttempt(input: {
     };
     const credentials = normalizedSecrets(Object.values(credentialSources));
     attemptSecrets = credentials;
+    refreshManualRoots();
     const needsPrivateInputs = selectedDescriptor && ((selectedDescriptor.requiredCredentials?.length ?? 0) > 0 || selectedDescriptor.externalInput);
     if (needsPrivateInputs && executions.length !== 1) throw new Error("Private case inputs require one explicitly selected execution");
     await mkdir(selectedPrivateInputsDirectory, { mode: 0o700 });
@@ -579,7 +624,7 @@ async function runAttempt(input: {
     delete sourceEnvironment[PUBLIC_ORIGIN_CONTROL_ENV]; delete sourceEnvironment[PUBLIC_ORIGIN_RECEIPT_ENV];
     if (selectedDescriptor?.scenarioId === ARCHIVE_SCENARIO) archiveControl = await startArchiveFaultControl({ selected: executions.map(row => row.id), temporaryRoot, backendOrigin: `http://127.0.0.1:${port}`, privateSecrets: credentials });
     if (databaseLane === "owned-docker-postgres") dockerDatabase = await startOwnedDockerDatabase({ temporaryRoot, privateSecrets: credentials });
-    const diagnosticRegistry = stagePrivateDiagnostics(temporaryRoot, executions.map(row => row.id), credentials);
+    diagnosticRegistry = stagePrivateDiagnostics(temporaryRoot, executions.map(row => row.id), credentials);
     if (installedCli) await writeFile(path.join(privateDir, "installed-cli-admission.json"), `${JSON.stringify(installedCli, null, 2)}\n`, { mode: 0o600 });
     if (installedPlugin) await writeFile(path.join(privateDir, "installed-daytona-plugin-admission.json"), `${JSON.stringify(installedPlugin, null, 2)}\n`, { mode: 0o600 });
     const runnerBinary = installedCli ? undefined : resolvePaperclipRunnerBinaryForHarness(
@@ -670,10 +715,16 @@ async function runAttempt(input: {
         path.join(privateDir, "cases", candidate.task.id, "result.json"),
       ),
       options.ui || options.debug,
-      () => readPrivateDiagnosticSecrets(diagnosticRegistry, temporaryRoot),
+      () => readPrivateDiagnosticSecrets(diagnosticRegistry!, temporaryRoot),
+      invitationScope,
     );
     credentials.splice(0, credentials.length, ...readPrivateDiagnosticSecrets(diagnosticRegistry, temporaryRoot));
+    refreshManualRoots();
     processCleanupFailed = processResult.processCleanupError !== null;
+    if (invitationScope) {
+      try { invitationDiagnosticDisposition(invitationScope, { failed: processResult.privateDiagnosticFailure, redactedSecret: processResult.privateDiagnosticLeak }); }
+      catch { manualEvidenceFailure = new Error(processResult.privateDiagnosticLeak ? "Secret leak in invitation diagnostics; no private archive fallback" : "Invitation diagnostic scan failed; no private archive fallback"); throw manualEvidenceFailure; }
+    }
     if (options.installedStartupOnly) {
       const proofDir = path.join(resultsRoot, campaignId, "installed-startup-only");
       await mkdir(proofDir, { recursive: true });
@@ -885,9 +936,11 @@ async function runAttempt(input: {
         persistedStateSecretFinding: !!persistedStateFinding && persistenceCheckedExecutions.includes(candidate),
         reporterEvidenceWithheld: reporterPrivacy.length > 0,
       });
+      await preserveManualOriginal(candidate.id, casePrivateDir);
+      result = invitationPrivateResultEnvelope(result);
       await writeFile(
         resultPath,
-        `${JSON.stringify(sanitizeJson(result, credentials), null, 2)}\n`,
+        `${JSON.stringify(sanitizeJson(invitationPrivateResultEnvelope(result), credentials), null, 2)}\n`,
         "utf8",
       );
       let evidence = await packageEvidence({
@@ -896,6 +949,8 @@ async function runAttempt(input: {
         secrets: credentials,
         expectPassScreenshot: result.status === "passed",
       });
+      const originalEvidence = evidence, originalFeaturePassed = result.status === "passed";
+      if (manualPrivateHandoff) originalPackageScans.set(candidate.id, { evidence: originalEvidence, passed: originalFeaturePassed });
       if (evidence.leaks.length > 0 || evidence.missing.length > 0) {
         result = withholdPrivateScreenshots(result, { packagedEvidenceSecretFinding: evidence.leaks.length > 0 });
         result = {
@@ -912,7 +967,7 @@ async function runAttempt(input: {
         };
         await writeFile(
           resultPath,
-          `${JSON.stringify(sanitizeJson(result, credentials), null, 2)}\n`,
+          `${JSON.stringify(sanitizeJson(invitationPrivateResultEnvelope(result), credentials), null, 2)}\n`,
           "utf8",
         );
         evidence = await packageEvidence({
@@ -922,11 +977,13 @@ async function runAttempt(input: {
           expectPassScreenshot: false,
         });
       }
+      await sealManualOriginal(candidate, casePrivateDir, originalEvidence, originalFeaturePassed);
       await copyHealthHelloDetail(temporaryRoot, candidate.id, uploadDir, credentials);
       await copyRetainedSourceSdk(temporaryRoot, candidate.id, result.source?.sha ?? null, uploadDir, credentials, repositoryRoot);
       console.log(
         `${result.status === "passed" ? "PASS" : "FAIL"} ${candidate.id} attempt ${attempt} -> ${uploadDir}`,
       );
+      Object.assign(result, invitationPrivateResultEnvelope(result));
       publishedResults.push(result);
       publishedResultPaths.set(
         candidate.id,
@@ -936,20 +993,34 @@ async function runAttempt(input: {
     return [...publishedResults];
   } catch (error) {
     if (error instanceof PublicOriginCleanupError) processCleanupFailed = true;
+    refreshManualRoots();
     // Packaging/diagnostic failures must not erase an actually launched attempt
     // or its primary startup failure. Retain only closed sanitized metadata;
     // raw reports stay private when their normal packaging path failed.
     for (const candidate of executions) {
       if (publishedResultPaths.has(candidate.id)) continue;
-      const casePrivateDir = path.join(temporaryRoot, "artifacts-private", "cases", candidate.task.id);
+      const casePrivateDir = path.join(privateDir, "cases", candidate.task.id);
       const fallback = syntheticResult(candidate, attempt, startedAtMs, "Attempt terminated before a worker result was retained");
       const original = await readResult(path.join(casePrivateDir, "result.json"), fallback);
-      const result = abnormalFinalizationResult(original, error);
+      if (manualPrivateHandoff && !originalSealAttempted.has(candidate.id)) {
+        const validation = path.join(manualPrivateHandoff.root, `abnormal-scan-${manualCellKind(candidate.id)}`);
+        try {
+          if (manualEvidenceFailure) throw manualEvidenceFailure;
+          await mkdir(casePrivateDir, { recursive: true, mode: 0o700 });
+          await copySharedEvidence(privateDir, casePrivateDir);
+          await preserveManualOriginal(candidate.id, casePrivateDir);
+          const previousScan = originalPackageScans.get(candidate.id);
+          const evidence = previousScan?.evidence ?? await packageEvidence({ privateDir: casePrivateDir, uploadDir: validation, secrets: attemptSecrets, expectPassScreenshot: original.status === "passed" });
+          await sealManualOriginal(candidate, casePrivateDir, evidence, previousScan?.passed ?? original.status === "passed");
+        } catch { manualEvidenceFailure = new Error("Private abnormal evidence could not be sealed; no public fallback"); }
+        finally { await rm(validation, { recursive: true, force: true }); }
+      }
+      const result = invitationPrivateResultEnvelope(abnormalFinalizationResult(original, error));
       if (databaseLane === "owned-docker-postgres") result.databaseIdentity = dockerDatabase ? publicDockerDatabaseIdentity(dockerDatabase.receipt) : (await dockerDatabaseLaunchState(databaseLane, temporaryRoot)).identity;
       const uploadDir = path.join(resultsRoot, campaignId, candidate.suite.id, candidate.profile.id, candidate.environment.id, candidate.task.id, `attempt-${attempt}`);
       await mkdir(uploadDir, { recursive: true });
       const resultPath = path.join(uploadDir, "result.json");
-      const safe = `${JSON.stringify(sanitizeJson(result, attemptSecrets), null, 2)}\n`;
+      const safe = `${JSON.stringify(sanitizeJson(invitationPrivateResultEnvelope(result), attemptSecrets), null, 2)}\n`;
       assertSecretFree(safe, attemptSecrets, resultPath);
       await writeFile(resultPath, safe, "utf8");
       await writeFile(path.join(uploadDir, "abnormal-finalization.json"), `${JSON.stringify(sanitizeJson({
@@ -958,6 +1029,7 @@ async function runAttempt(input: {
       }, attemptSecrets), null, 2)}\n`, { mode: 0o600 });
       await copyRetainedSourceSdk(temporaryRoot, candidate.id, result.source?.sha ?? null, uploadDir, attemptSecrets, repositoryRoot).catch(() => {});
       if (rawCleanupResults.length < executions.length) rawCleanupResults.push({ cleanup: original.cleanup, synthetic: original === fallback, status: original.status });
+      Object.assign(result, invitationPrivateResultEnvelope(result));
       publishedResults.push(result); publishedResultPaths.set(candidate.id, resultPath);
     }
     return [...publishedResults];
@@ -976,10 +1048,13 @@ async function runAttempt(input: {
     try { await gateway?.close(); } catch (error) { gatewayCleanupError = error; }
     if (!processCleanupFailed && databaseFinalization.allowDarwinReap) reapNewDetachedDarwinSharedMemory(sharedMemoryBaseline);
     let cleanupError: unknown;
+    // Last read while the durable registry still exists. A late registration or
+    // worker failure cannot silently shrink the final archive scan's roots.
+    refreshManualRoots();
     // Raw selected keys are never diagnostic/archive artifacts, even when recovery state is retained.
     try { await rm(selectedPrivateInputsDirectory, { recursive: true, force: true }); }
     catch { cleanupError = new Error("Selected private credential cleanup failed; contents withheld"); }
-    const resourceAdmissionStarted = await access(path.join(temporaryRoot, "artifacts-private", "resource-admission-started"))
+    const resourceAdmissionStarted = await access(path.join(privateDir, "resource-admission-started"))
       .then(() => true).catch((error: NodeJS.ErrnoException) => error.code !== "ENOENT");
     if (mustPreserveRecoveryState({ processCleanupFailed, resourceAdmissionStarted, results: rawCleanupResults })) {
       // Remote allocation cleanup is journaled in this instance's database.
@@ -1038,8 +1113,9 @@ async function runAttempt(input: {
           error: publishedResult.error ? `${publishedResult.error}; ${message}` : message,
           cleanup: "failed",
         } satisfies Partial<RunnerE2EResult>);
+        Object.assign(publishedResult, invitationPrivateResultEnvelope(publishedResult));
         const safeResult = `${JSON.stringify(
-          sanitizeJson(publishedResult, attemptSecrets),
+          sanitizeJson(invitationPrivateResultEnvelope(publishedResult), attemptSecrets),
           null,
           2,
         )}\n`;
@@ -1048,12 +1124,12 @@ async function runAttempt(input: {
       }
       // Cleanup failure is a failed cell, but must not suppress later cells in
       // the same campaign. The result above carries the terminal failure.
-      console.error(message);
+      console.error(invitationScope ? "Invitation cleanup failed; inspect its restricted attempt result" : message);
       if (options.installedStartupOnly) throw new Error(message);
     }
     if (databaseLane === "owned-docker-postgres") for (const result of publishedResults) {
       const filename = publishedResultPaths.get(result.executionId); if (!filename) continue;
-      const safe = `${JSON.stringify(sanitizeJson(result, attemptSecrets), null, 2)}\n`;
+      const safe = `${JSON.stringify(sanitizeJson(invitationPrivateResultEnvelope(result), attemptSecrets), null, 2)}\n`;
       assertSecretFree(safe, attemptSecrets, filename); await writeFile(filename, safe, "utf8");
     }
     for (const result of publishedResults) {
@@ -1072,7 +1148,7 @@ async function runAttempt(input: {
         ? await finalizeEvalAttemptThroughRelay(traceConfig, finalizationInput,
           path.join(`${input.operations.manifest.ledgerPath}.otlp`, `${createHash("sha256").update(accountingAttemptId).digest("hex")}-finalization.jsonl`))
         : await finalizeEvalAttemptTrace(traceConfig, finalizationInput);
-      const safeResult = `${JSON.stringify(sanitizeJson(result, attemptSecrets), null, 2)}\n`;
+      const safeResult = `${JSON.stringify(sanitizeJson(invitationPrivateResultEnvelope(result), attemptSecrets), null, 2)}\n`;
       assertSecretFree(safeResult, attemptSecrets, resultPath);
       await writeFile(resultPath, safeResult, "utf8");
     }
@@ -1159,6 +1235,10 @@ async function main() {
     throw error;
   }
   const executions = selectRunnerExecutions(options, runnerMatrix);
+  const invitationExecution = executions.find(execution => execution.id === INVITATION_PRIVATE_EXECUTION);
+  invitationInvocationScope = invitationExecution ? declareSelectedInvitationEvidence(invitationExecution.id, 1, resolveRunnerE2ESource().sha ?? "") : undefined;
+  manualPrivateHandoff = await readManualPrivateHandoff(process.env, executions.map(execution => execution.id));
+  if (manualPrivateHandoff) resultsRoot = path.join(manualPrivateHandoff.root, "results");
   if (options.installedStartupOnly) {
     assertInstalledStartupOnly(process.env, executions, options);
     assertRunnerE2EPrerequisites(executions);
@@ -1182,6 +1262,8 @@ async function main() {
     );
     return;
   }
+  if (process.env.GITHUB_ACTIONS === "true" && executions.some(execution => requiresPrivateManualEvidence(execution.id)) && !manualPrivateHandoff)
+    throw new Error("Sensitive GHA evidence requires verified restricted retention before setup");
 
   if (process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST && executions.some(execution => execution.task.flow === "provider_connection")) throw new Error("Provider connection campaign has no budgeted routing qualification");
   if (executions.some(execution => execution.task.flow === "github_review_journey")) {
@@ -1345,6 +1427,11 @@ async function main() {
 }
 
 await main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(invitationInvocationScope ? "Invitation operation failed; inspect its restricted attempt result" : error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
-});
+}).finally(async () => {
+  if (manualPrivateHandoff) {
+    if (manualEvidenceFailure) throw manualEvidenceFailure;
+    await sealManualResultEvidence(manualPrivateHandoff, [...manualEvidenceSecrets]);
+  }
+}).catch(() => { process.stderr.write("Private evidence finalization failed; no public fallback\n"); process.exitCode = 1; });
