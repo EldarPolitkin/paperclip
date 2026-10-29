@@ -51,13 +51,15 @@ export const runtimeActiveSteeringCases = [runtimeDefinition("steering.steer-act
   const profile = extendedHarnessProfiles.find(row => row.id === "runner-acpx-pi");
   if (!profile || profile.model !== "openrouter/anthropic/claude-sonnet-4.6" || profile.credential !== "OPENROUTER_API_KEY")
     throw new Error("Active steering requires the fixed native Pi feature profile");
-  const feature = profile.buildAgent({ environmentId: ctx.input.fixtures.environment.id, environmentFixtureId: ctx.input.execution.environment.id,
-    workspacePath: ctx.input.workspacePath, secretRefs: ctx.input.fixtures.secretRefs, executionId: ctx.input.nonce });
-  const worker = await runtimeWorker(ctx, "Morgan", { adapterType: feature.adapterType, adapterConfig: feature.adapterConfig });
+  const buildInput = { environmentId: ctx.input.fixtures.environment.id, environmentFixtureId: ctx.input.execution.environment.id,
+    workspacePath: ctx.input.workspacePath, secretRefs: ctx.input.fixtures.secretRefs, executionId: ctx.input.nonce };
+  const feature = profile.buildAgent(buildInput), original = ctx.input.execution.profile.buildAgent(buildInput);
+  const adapterConfig = { ...(feature.adapterConfig as Record<string, unknown>), timeoutSec: (original.adapterConfig as Record<string, unknown>).timeoutSec };
+  const worker = await runtimeWorker(ctx, "Morgan", { adapterType: feature.adapterType, adapterConfig });
   const saved = worker.adapterConfig;
   if (worker.companyId !== ctx.input.fixtures.company.id || worker.reportsTo !== ctx.input.fixtures.agent.id
     || worker.defaultEnvironmentId !== ctx.input.fixtures.environment.id || worker.adapterType !== "paperclip_runner"
-    || saved?.provider !== "acpx" || saved.acpxAgent !== "pi" || saved.model !== profile.model)
+    || saved?.provider !== "acpx" || saved.acpxAgent !== "pi" || saved.model !== profile.model || saved.timeoutSec !== adapterConfig.timeoutSec)
     throw new Error("Saved active-steering feature worker differs from its selected native Pi profile");
   const state: Record<string, unknown> = await busyRuntimeWorker(ctx, { worker }), task = state.task as Entity, source = ctx.input.page.url();
   await ctx.input.evidence("runtime-steering-feature-profile.json", {

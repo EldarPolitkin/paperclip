@@ -86,6 +86,7 @@ it("creates the genuine Pi feature profile with the existing OpenRouter referenc
   }, runtimeConfig: { heartbeat: { enabled: false, maxConcurrentRuns: 1 } } });
   expect(fixture.execution.profile.buildAgent({ environmentId: "environment", environmentFixtureId: "local", workspacePath: "/owned/workspace", executionId: "selected-case", secretRefs: { OPENROUTER_API_KEY: fixture.secretRef } })).toEqual(before);
   expect(before.adapterConfig).toMatchObject({ provider: "opencode", model: "openrouter/deepseek/deepseek-v4.1-flash-1017" });
+  expect((fixture.posts[0]!.adapterConfig as Record<string, unknown>).timeoutSec).toBe((before.adapterConfig as Record<string, unknown>).timeoutSec);
   expect(state.workerRunId).toBe("worker-run");
   expect(fixture.controls).toEqual(["task-chat-queued-steer-direction"]);
 });
@@ -94,6 +95,7 @@ it.each([
   { adapterType: "opencode_local" },
   { adapterConfig: { provider: "opencode", model: "openrouter/anthropic/claude-sonnet-4.6" } },
   { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "other/model" } },
+  { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "openrouter/anthropic/claude-sonnet-4.6", timeoutSec: 120 } },
   { companyId: "foreign" },
 ])("rejects a mismatched actual saved feature worker before creating an active task: %j", async publicOverride => {
   const fixture = setupFixture({ publicOverride });
