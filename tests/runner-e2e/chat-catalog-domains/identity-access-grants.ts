@@ -1,3 +1,4 @@
+import { prepareInvitationAgentAuthority } from "./identity-invite-grant-setup.js";
 import { createHash } from "node:crypto";
 import { expect } from "@playwright/test";
 import type { ChatCatalogCase, ChatCatalogContext } from "../chat-catalog-contract.js";
@@ -70,6 +71,12 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
   const alex = await createAuthenticatedPerson({ api: ctx.input.api, browser, secrets: ctx.input.privateSecrets, name: "Alex", email: "alex@example.test" }); people.set(ctx, [alex]);
   try {
     if (scenarioId.endsWith("manage-membership")) await enrollAuthenticatedPerson(ctx.input.api, ctx.input.fixtures.company.id, alex, ctx.input.privateSecrets, "operator");
+    const state = scenarioId.endsWith("invite-teammate") ? await prepareInvitationAgentAuthority({
+      companyId: ctx.input.fixtures.company.id, agentId: ctx.input.fixtures.agent.id, api: ctx.input.api,
+      patch: async (route, grants) => { const response = await ctx.input.page.context().request.patch(`${ctx.input.api.baseURL}${route}`, { data: { grants }, headers: { Origin: ctx.input.api.baseURL } });
+        try { return response.status(); } finally { await response.dispose(); } },
+      probeInvites: () => readAgentResource(ctx, `${root}/invites`),
+    }) : await (async () => {
     const detail = await ctx.input.api.get<AgentAccess>(`/api/agents/${ctx.input.fixtures.agent.id}`);
     const membership = detail.access?.membership;
     if (!membership || membership.principalType !== "agent" || membership.principalId !== ctx.input.fixtures.agent.id) throw new Error("Setup blocker: public agent detail exposes no real company agent membership");
@@ -85,6 +92,9 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
     await ctx.input.evidence("identity-explicit-agent-grant-prerequisite.json", { ...state, originalQuery: ctx.scenario.query, originalQuerySent: false,
       setupBlocked: attempt.status() !== 200 || probe.status !== 200, unsupportedSurface: "Public member mutations reject non-human principals before writing; agent permissions schema only synchronizes tasks:assign." });
     if (attempt.status() !== 200 || probe.status !== 200) throw new Error(`Setup blocker: supported public grant path did not establish ${permissionKey} on the actual agent principal (grant HTTP ${attempt.status()}, agent read HTTP ${probe.status}); this is not an expected refusal pass`);
+      return state;
+    })();
+    if (scenarioId.endsWith("invite-teammate")) await ctx.input.evidence("identity-explicit-agent-grant-prerequisite.json", { ...state, originalQuery: ctx.scenario.query, originalQuerySent: false, setupBlocked: false });
     const notMemberBeforeAcceptance = !(await ctx.input.api.get<{ members: Member[] }>(`${root}/members`)).members.some(row => row.principalId === alex.id);
     const baseline = { ...state, alexId: alex.id, notMemberBeforeAcceptance, invitationsBefore: (await ctx.input.api.get<{ invites: Invitation[] }>(`${root}/invites`)).invites.map(row => row.id) };
     if (scenarioId.endsWith("manage-membership")) {
@@ -105,8 +115,8 @@ export const accessGrantIdentityCases: readonly ChatCatalogCase[] = ["access.inv
     return baseline;
   } catch (error) { await alex.dispose(); people.delete(ctx); throw error; }
 }, gradeAccessGrant, {
-  sourceFiles: sources, authentication: "human-session",
-  coverageGaps: ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
+  sourceFiles: [...sources, ...(scenarioId.endsWith("invite-teammate") ? ["chat-catalog-domains/identity-invite-grant-setup.ts"] : [])], authentication: "human-session",
+  coverageGaps: scenarioId.endsWith("invite-teammate") ? ["invitation-private-capability-evidence-projection-unresolved"] : ["The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."],
   async observe(ctx, state) {
     if (scenarioId.endsWith("invite-teammate")) {
       state.invitations = (await ctx.input.api.get<{ invites: Invitation[] }>(`/api/companies/${ctx.input.fixtures.company.id}/invites`)).invites.filter(row => !(state.invitationsBefore as string[]).includes(row.id));

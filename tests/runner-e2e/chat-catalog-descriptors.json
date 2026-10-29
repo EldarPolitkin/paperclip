@@ -34,11 +34,12 @@
       "../../maps/agent-access-map/access.md",
       "../../server/src/routes/access.ts",
       "../../server/src/routes/agents.ts",
-      "../../packages/shared/src/validators/agent.ts"
+      "../../packages/shared/src/validators/agent.ts",
+      "chat-catalog-domains/identity-invite-grant-setup.ts"
     ],
     "oracleVersion": "paperclip.chat-catalog.identity.v1",
     "coverageGaps": [
-      "The current public grant-management route rejects agent membership principals. Required users:* agent authority cannot be established through the supported API; the actual intended mutation and human acceptance/reuse callbacks are authored but remain unqualified until this setup capability is available."
+      "invitation-private-capability-evidence-projection-unresolved"
     ],
     "expectedRunCount": 1,
     "turnTimeoutMs": 120000,
