@@ -236,6 +236,12 @@ a terminal provider receipt. Unknown cancellation remains unconfirmed. Recovery
 reuses the saved Agent/Run and stream cursor, keeps the original deadline, and does
 not replay an ambiguous paid mutation.
 
+Checkpoint acquisition and dead-owner takeover share a private, bounded local
+acquisition guard; no network work runs while it is held. Ordinary dead main-owner
+recovery remains automatic when that guard is absent. An abandoned or
+ownership-changed acquisition guard blocks reuse and archival as ambiguous state.
+It is retained for reconciliation, never reclaimed from its age or PID alone.
+
 Cloud deliverables use `cursor-artifact:<listed relative path>` with the exact
 byte count and SHA-256. Runner downloads the provider artifact to its private
 artifact root before normal deliverable registration. A remote path never grants

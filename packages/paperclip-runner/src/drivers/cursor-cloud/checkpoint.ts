@@ -51,6 +51,7 @@ export class CursorCloudCheckpointStore {
   readonly #lockPath: string;
   readonly #root: string;
   #lockToken: string | null = null;
+  #lockIdentity: { dev: number; ino: number } | null = null;
   recoveredDeadOwner = false;
   #writes: Promise<void> = Promise.resolve();
 
@@ -66,29 +67,58 @@ export class CursorCloudCheckpointStore {
     const root = await lstat(this.#root);
     if (!root.isDirectory() || root.isSymbolicLink() || (root.mode & 0o077) !== 0 || (process.getuid && root.uid !== process.getuid())) throw new Error("Cursor Cloud runtime directory must be owned and private (0700)");
     const token = randomUUID();
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const handle = await open(this.#lockPath, "wx", 0o600);
-        try { await handle.writeFile(JSON.stringify({ pid: process.pid, token })); await handle.sync(); }
-        finally { await handle.close(); }
-        this.#lockToken = token;
-        return;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt !== 0) throw new Error("Cursor Cloud session already has an owner");
-        const before = await lstat(this.#lockPath);
-        if (!before.isFile() || before.isSymbolicLink() || (before.mode & 0o077) !== 0) throw new Error("Cursor Cloud checkpoint ownership is unsafe");
-        let owner: { pid?: unknown };
-        try { owner = JSON.parse(await readFile(this.#lockPath, "utf8")); }
-        catch { throw new Error("Cursor Cloud checkpoint owner is unknown"); }
-        if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) <= 0) throw new Error("Cursor Cloud checkpoint owner is unknown");
-        try { process.kill(Number(owner.pid), 0); throw new Error("Cursor Cloud session already has a live owner"); }
-        catch (cause) { if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause; }
-        const current = await lstat(this.#lockPath);
-        if (current.ino !== before.ino || current.dev !== before.dev) throw new Error("Cursor Cloud checkpoint owner changed");
-        await unlink(this.#lockPath);
-        this.recoveredDeadOwner = true;
-      }
+    const guardPath = `${this.#lockPath}.acquire`;
+    let guard;
+    try { guard = await open(guardPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST" || (error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Cursor Cloud checkpoint acquisition is in progress or ambiguous");
+      throw error;
     }
+    try {
+      const held = await guard.stat();
+      await guard.writeFile(JSON.stringify({ pid: process.pid, token })); await guard.sync();
+      try {
+        // Serialize the complete stale-lock decision and replacement, not just unlink.
+        // An abandoned guard is uncertainty: never recursively take over another guard.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const handle = await open(this.#lockPath, "wx", 0o600);
+            let identity;
+            try { identity = await handle.stat(); await handle.writeFile(JSON.stringify({ pid: process.pid, token })); await handle.sync(); }
+            finally { await handle.close(); }
+            this.#lockIdentity = { dev: identity.dev, ino: identity.ino };
+            this.#lockToken = token;
+            return;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt !== 0) throw new Error("Cursor Cloud session already has an owner");
+            const before = await lstat(this.#lockPath);
+            if (!before.isFile() || before.isSymbolicLink() || (before.mode & 0o077) !== 0) throw new Error("Cursor Cloud checkpoint ownership is unsafe");
+            let owner: { pid?: unknown };
+            try { owner = JSON.parse(await readFile(this.#lockPath, "utf8")); }
+            catch { throw new Error("Cursor Cloud checkpoint owner is unknown"); }
+            if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) <= 0) throw new Error("Cursor Cloud checkpoint owner is unknown");
+            try { process.kill(Number(owner.pid), 0); throw new Error("Cursor Cloud session already has a live owner"); }
+            catch (cause) { if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause; }
+            const current = await lstat(this.#lockPath);
+            if (current.ino !== before.ino || current.dev !== before.dev) throw new Error("Cursor Cloud checkpoint owner changed");
+            await unlink(this.#lockPath);
+            this.recoveredDeadOwner = true;
+          }
+        }
+      } finally {
+        let current;
+        try {
+          current = await open(guardPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+          const stat = await current.stat();
+          if (!stat.isFile() || stat.dev !== held.dev || stat.ino !== held.ino || (stat.mode & 0o077) !== 0
+            || (process.getuid && stat.uid !== process.getuid()) || stat.size > 1_024) throw new Error("Cursor Cloud checkpoint acquisition ownership changed");
+          const owner = JSON.parse(await current.readFile("utf8"));
+          if (owner.pid !== process.pid || owner.token !== token) throw new Error("Cursor Cloud checkpoint acquisition ownership changed");
+        } catch { throw new Error("Cursor Cloud checkpoint acquisition ownership changed"); }
+        finally { await current?.close(); }
+        await unlink(guardPath);
+      }
+    } finally { await guard.close(); }
   }
 
   async read(): Promise<CursorCloudCheckpoint | null> {
@@ -147,11 +177,18 @@ export class CursorCloudCheckpointStore {
 
   async release(): Promise<void> {
     await this.#writes;
-    if (!this.#lockToken) return;
-    const current = JSON.parse(await readFile(this.#lockPath, "utf8"));
-    if (current.token !== this.#lockToken || current.pid !== process.pid) throw new Error("Cursor Cloud checkpoint ownership changed");
+    if (!this.#lockToken || !this.#lockIdentity) return;
+    const handle = await open(this.#lockPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.dev !== this.#lockIdentity.dev || stat.ino !== this.#lockIdentity.ino || (stat.mode & 0o077) !== 0
+        || (process.getuid && stat.uid !== process.getuid()) || stat.size > 1_024) throw new Error("Cursor Cloud checkpoint ownership changed");
+      const current = JSON.parse(await handle.readFile("utf8"));
+      if (current.token !== this.#lockToken || current.pid !== process.pid) throw new Error("Cursor Cloud checkpoint ownership changed");
+    } finally { await handle.close(); }
     await unlink(this.#lockPath);
     this.#lockToken = null;
+    this.#lockIdentity = null;
   }
 }
 
