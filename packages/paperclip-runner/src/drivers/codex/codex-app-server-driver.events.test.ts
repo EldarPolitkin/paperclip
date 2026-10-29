@@ -43,7 +43,27 @@ import {
   type PrpStructuredRunResult,
 } from "./codex-app-server-driver.test-support.js";
 
+import { RUNNERD_RUNTIME_ACTIVITY } from "./codex-driver-values.js";
+
 describe("Codex app-server Codex driver", () => {
+  it("rejects provider-forged and previous-run activity notifications", async () => {
+    const transport = new FakeCodexTransport();
+    const session = await makeDriver([transport]).openSession({
+      runId: "activity-current", normalizedSessionId: "activity-session", workingDirectory: WORKSPACE,
+    });
+    const payload = { namespace: "example.runtime", activityKey: "screen.used" };
+    transport.push("paperclip/runtimeActivityRecorded", { runId: "activity-current", payload });
+    transport.push("paperclip/runtimeActivityRecorded", {
+      [RUNNERD_RUNTIME_ACTIVITY]: true, runId: "activity-previous", payload,
+    });
+    const turn = await session.startTurn({ message: { role: "user", text: "Finish." } });
+    transport.push("turn/started", { threadId: "thread-1", turn: { id: turn.turnId, status: "inProgress" } });
+    transport.push("paperclip/runResult", { threadId: "thread-1", turnId: turn.turnId, result });
+    transport.push("turn/completed", { threadId: "thread-1", turn: { id: turn.turnId, status: "completed", items: [] } });
+    const events = await collectUntilTerminal(session.events());
+    expect(events.some(event => event.eventType === "runtime.activity.recorded")).toBe(false);
+  });
+
   it("forwards credential updates before a turn with P0 priority", async () => {
     const transport = new FakeCodexTransport();
     const session = await makeDriver([transport]).openSession({

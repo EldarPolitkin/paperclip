@@ -28,6 +28,7 @@ import {
   recordWorkspaceChanges,
 } from "./codex-session-workspace.js";
 import {
+  RUNNERD_RUNTIME_ACTIVITY,
   boundedText,
   differingJsonPaths,
   itemFromParams,
@@ -105,6 +106,14 @@ async function mapNotification(state: CodexSessionState, notification: CodexRpcN
   }
 
 async function mapNotificationBody(state: CodexSessionState, notification: CodexRpcNotification): Promise<void> {
+    if (notification.method === "paperclip/runtimeActivityRecorded") {
+      const params = notification.params;
+      if ((params as Record<PropertyKey, unknown>)[RUNNERD_RUNTIME_ACTIVITY] === true
+        && params.runId === state.runId) {
+        state.emit("runtime.activity.recorded", record(params.payload));
+      }
+      return;
+    }
     if (!isSupportedCodexNotificationMethod(notification.method)) return;
     if (notification.method === "item/completed" && notification.params.kind === "steering_acknowledgement"
       && !notification.params.threadId && !notification.params.turnId && !notification.params.thread && !notification.params.turn) return;
