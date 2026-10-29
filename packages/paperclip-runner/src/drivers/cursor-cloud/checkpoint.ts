@@ -32,6 +32,7 @@ export interface CursorCloudCheckpoint {
   agentId: string | null;
   runId: string | null;
   turnId: string | null;
+  relayTurnToken?: string | null;
   phase: "idle" | "creating" | "running" | "stopping" | "terminal";
   pendingOperation: "create_agent" | "create_run" | null;
   idempotencyKey: string | null;
@@ -134,11 +135,13 @@ export class CursorCloudCheckpointStore {
       if (cp.deadlineAt === undefined) cp.deadlineAt = ["creating", "running", "stopping"].includes(cp.phase) ? 0 : null;
       if (cp.pendingTerminalDelivery === undefined) cp.pendingTerminalDelivery = null;
       if (cp.instructionsRevisionPending === undefined) cp.instructionsRevisionPending = false;
+      if (cp.relayTurnToken === undefined) cp.relayTurnToken = null;
       const digestFields = [cp.bindingDigest, cp.configDigest, cp.modelDigest, cp.instructionsDigest];
       if (cp.schema !== "paperclip.cursor-cloud.checkpoint.v1" || !digestFields.every(v => typeof v === "string" && /^[a-f0-9]{64}$/.test(v))
         || !["idle", "creating", "running", "stopping", "terminal"].includes(cp.phase)
         || !Number.isSafeInteger(cp.sourceSequence) || cp.sourceSequence < 0
         || typeof cp.instructionsRevisionPending !== "boolean"
+        || (cp.relayTurnToken !== null && (typeof cp.relayTurnToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(cp.relayTurnToken)))
         || (cp.deadlineAt !== null && (!Number.isSafeInteger(cp.deadlineAt) || cp.deadlineAt < 0))
         || !Array.isArray(cp.lastEventFingerprints) || cp.lastEventFingerprints.length > 32
         || !cp.lastEventFingerprints.every(v => typeof v === "string" && /^[a-f0-9]{64}$/.test(v))

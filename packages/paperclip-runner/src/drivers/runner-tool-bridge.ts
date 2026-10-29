@@ -18,6 +18,8 @@ import {
   PRP_COMPLETION_TOOL_NAME,
 } from "../contracts/completion-result.js";
 
+export const RUNNER_TOOL_SCOPE_TOKEN_HEADER = "x-paperclip-runner-scope-token";
+
 export interface RunnerToolDefinition {
   name: string;
   description?: string;
@@ -55,6 +57,7 @@ export interface RunnerToolBridgeOptions {
   secret?: string;
   socketPath?: string;
   sessionScope?: () => string | null;
+  scopeToken?: () => string | null;
 }
 
 export interface RunnerToolBridge {
@@ -146,6 +149,7 @@ export async function startRunnerToolBridge(
     calls,
     controllers,
     sessionScope: options.sessionScope,
+    scopeToken: options.scopeToken,
     sessions: new Map<string, string>(),
     activeScope: null as string | null,
     handler: options.handler,
@@ -224,6 +228,7 @@ async function handleRequest(
   context: {
     secret: string;
     sessionScope?: () => string | null;
+    scopeToken?: () => string | null;
     sessions: Map<string, string>;
     activeScope: string | null;
     preserveToolNames: boolean;
@@ -258,6 +263,14 @@ async function handleRequest(
     response.end();
     return;
   }
+  const scopeToken = context.scopeToken?.();
+  if (context.scopeToken) {
+    if (!scopeToken) { response.statusCode = 403; response.end(); return; }
+    const supplied = request.headers[RUNNER_TOOL_SCOPE_TOKEN_HEADER];
+    if (typeof supplied !== "string" || !authorized(supplied, scopeToken)) {
+      response.statusCode = 401; response.end(); return;
+    }
+  }
   let message: Record<string, unknown>;
   try {
     message = parseMessage(
@@ -270,6 +283,9 @@ async function handleRequest(
   } catch (error) {
     writeRpc(response, null, undefined, rpcError(-32700, safeError(error)));
     return;
+  }
+  if (context.scopeToken && scopeToken !== context.scopeToken()) {
+    response.statusCode = 401; response.end(); return;
   }
   const id = message.id ?? null;
   const method = typeof message.method === "string" ? message.method : "";

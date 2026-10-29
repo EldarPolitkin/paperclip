@@ -10,6 +10,7 @@ import type { CursorCloudCreateInput, CursorCloudFollowupInput, CursorCloudRun, 
 import { CursorCloudClient, CursorCloudClientError } from "./cloud-client.js";
 import { CursorCloudCheckpointStore, cursorCloudDigest } from "./checkpoint.js";
 import { semanticCanonicalJson } from "../semantic-tool-receipt.js";
+import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../runner-tool-bridge.js";
 import { CursorCloudDriver, cursorCloudDriverDescriptor, type CursorCloudDriverOptions, type CursorCloudSessionHandle } from "./cursor-cloud-driver.js";
 
 const roots: string[] = [];
@@ -98,9 +99,11 @@ async function nextAuthority(f: Awaited<ReturnType<typeof fixture>>) {
   return { next, checkpoint: await savedCheckpoint(f.root, f.session), eventCount: f.events.length };
 }
 
-async function rpc(path: string, body: unknown, token = "private-relay-token", session?: string): Promise<{ status: number; value: any; session?: string }> {
+function relayHeaders(peer: Peer): Record<string, string> { return structuredClone(peer.request!.mcpServers[0]!.headers!); }
+
+async function rpc(path: string, body: unknown, token: string | Record<string, string> = "private-relay-token", session?: string): Promise<{ status: number; value: any; session?: string }> {
   return new Promise((accept, reject) => {
-    const req = request({ socketPath: path, path: "/mcp", method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", ...(session ? { "Mcp-Session-Id": session } : {}) } }, response => {
+    const req = request({ socketPath: path, path: "/mcp", method: "POST", headers: { ...(typeof token === "string" ? { Authorization: `Bearer ${token}` } : token), "content-type": "application/json", ...(session ? { "Mcp-Session-Id": session } : {}) } }, response => {
       let text = ""; response.setEncoding("utf8"); response.on("data", chunk => { text += chunk; });
       response.on("end", () => accept({ status: response.statusCode!, value: text ? JSON.parse(text) : null, session: response.headers["mcp-session-id"] as string | undefined }));
     });
@@ -497,8 +500,8 @@ describe("Cursor Cloud native driver", () => {
     f.peer.listArtifacts.mockResolvedValue({ items: [{ path: "artifacts/evidence.txt", sizeBytes: 12, updatedAt: "2026-10-28T00:00:00Z" }] } as any);
     await f.session.startTurn({ message: { role: "user", text: "Find the artifact" } }); await f.peer.created.promise;
     await waitFor(() => f.events.some(event => event.eventType === "item.delta"));
-    const initialized = await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" });
-    const result = await rpc(f.options.relay.socketPath, { id: 1, method: "tools/call", params: { name: "list_cursor_cloud_artifacts", arguments: {} } }, undefined, initialized.session);
+    const initialized = await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" }, relayHeaders(f.peer));
+    const result = await rpc(f.options.relay.socketPath, { id: 1, method: "tools/call", params: { name: "list_cursor_cloud_artifacts", arguments: {} } }, relayHeaders(f.peer), initialized.session);
     expect(JSON.parse(result.value.result.content[0].text)).toEqual({ items: [{ path: "artifacts/evidence.txt", sizeBytes: 12 }] });
     expect(f.peer.listArtifacts).toHaveBeenCalledWith(f.peer.native!.agentId, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(f.handler).not.toHaveBeenCalled();
@@ -557,16 +560,16 @@ describe("Cursor Cloud native driver", () => {
     await waitFor(() => f.events.some(event => event.eventType === "item.delta"));
     const path = f.options.relay.socketPath;
     expect((await rpc(path, { id: "bad", method: "tools/list" }, "wrong")).status).toBe(401);
-    const initialized = await rpc(path, { id: 1, method: "initialize" });
-    const response = await rpc(path, { id: "call-1", method: "tools/call", params: { name: "write_note", arguments: { note: "first" } } }, undefined, initialized.session);
+    const initialized = await rpc(path, { id: 1, method: "initialize" }, relayHeaders(f.peer));
+    const response = await rpc(path, { id: "call-1", method: "tools/call", params: { name: "write_note", arguments: { note: "first" } } }, relayHeaders(f.peer), initialized.session);
     expect(response.value.result.content[0].text).toContain('"success":true');
     expect(f.handler).toHaveBeenCalledWith(expect.objectContaining({ tool: "write_note", arguments: { note: "first" }, turnId: expect.stringMatching(/^turn-/) }));
-    await rpc(path, { id: "missing", method: "tools/call", params: { name: "not_admitted", arguments: {} } }, undefined, initialized.session);
+    await rpc(path, { id: "missing", method: "tools/call", params: { name: "not_admitted", arguments: {} } }, relayHeaders(f.peer), initialized.session);
     expect(f.handler).toHaveBeenCalledTimes(1);
     await f.session.interrupt!();
     expect(f.peer.cancelRun).toHaveBeenCalledTimes(1);
     expect(f.peer.getRun.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const late = await rpc(path, { id: "late", method: "tools/call", params: { name: "write_note", arguments: { note: "late" } } }, undefined, initialized.session);
+    const late = await rpc(path, { id: "late", method: "tools/call", params: { name: "write_note", arguments: { note: "late" } } }, relayHeaders(f.peer), initialized.session);
     expect(late.status).toBe(403); expect(f.handler).toHaveBeenCalledTimes(1);
     expect((await f.session.read?.())?.providerStatus).toBe("CANCELLED");
   });
@@ -575,12 +578,12 @@ describe("Cursor Cloud native driver", () => {
     const f = await fixture();
     await f.session.startTurn({ message: { role: "user", text: "Finish semantically" } }); await f.peer.created.promise;
     await waitFor(() => f.events.some(event => event.eventType === "item.delta"));
-    const initialized = await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" });
+    const initialized = await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" }, relayHeaders(f.peer));
     const args = { reportedWorkDisposition: "done", summary: "Completed.", evidence: [], verification: [], completionClaim: { contractRevision: "1", objectiveSatisfied: true, criteria: [], remainingWork: [] } };
     f.handler.mockResolvedValueOnce({ success: false, contentItems: [{ type: "inputText", text: "rejected" }] });
-    await rpc(f.options.relay.socketPath, { id: "rejected", method: "tools/call", params: { name: "paperclip_finish", arguments: args } }, undefined, initialized.session);
+    await rpc(f.options.relay.socketPath, { id: "rejected", method: "tools/call", params: { name: "paperclip_finish", arguments: args } }, relayHeaders(f.peer), initialized.session);
     expect((await f.session.read?.())?.semanticCompletionReceipt).toBeNull();
-    await rpc(f.options.relay.socketPath, { id: "accepted", method: "tools/call", params: { name: "paperclip_finish", arguments: args } }, undefined, initialized.session);
+    await rpc(f.options.relay.socketPath, { id: "accepted", method: "tools/call", params: { name: "paperclip_finish", arguments: args } }, relayHeaders(f.peer), initialized.session);
     expect((await f.session.read?.())?.semanticCompletionReceipt).toMatchObject({ inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(f.events.some(event => event.eventType === "turn.completed" || event.eventType === "run.result.proposed")).toBe(false);
     f.peer.native!.status = "FINISHED"; f.peer.release.resolve();
@@ -606,19 +609,96 @@ describe("Cursor Cloud native driver", () => {
     const f = await fixture(); const path = f.options.relay.socketPath;
     await f.session.startTurn({ message: { role: "user", text: "First turn" } }); await f.peer.created.promise;
     await waitFor(() => f.events.some(event => event.eventType === "item.delta"));
-    const first = await rpc(path, { id: 0, method: "initialize" });
-    const second = await rpc(path, { id: 0, method: "initialize" });
+    const first = await rpc(path, { id: 0, method: "initialize" }, relayHeaders(f.peer));
+    const second = await rpc(path, { id: 0, method: "initialize" }, relayHeaders(f.peer));
     const call = { id: 0, method: "tools/call", params: { name: "write_note", arguments: { note: "same wire ID" } } };
-    await rpc(path, call, undefined, first.session); await rpc(path, call, undefined, second.session);
+    await rpc(path, call, relayHeaders(f.peer), first.session); await rpc(path, call, relayHeaders(f.peer), second.session);
     expect(f.handler).toHaveBeenCalledTimes(2);
     expect(f.handler.mock.calls[0]![0].callId).not.toBe(f.handler.mock.calls[1]![0].callId);
     f.peer.native!.status = "FINISHED"; f.peer.release.resolve();
     await waitFor(() => f.events.some(event => event.eventType === "turn.completed"));
     await acknowledgeTerminal(f.session);
     await f.session.startTurn({ message: { role: "user", text: "Next turn" } });
-    const third = await rpc(path, { id: 0, method: "initialize" });
-    expect((await rpc(path, call, undefined, first.session)).status).toBe(404);
-    await rpc(path, call, undefined, third.session); expect(f.handler).toHaveBeenCalledTimes(3);
+    const third = await rpc(path, { id: 0, method: "initialize" }, relayHeaders(f.peer));
+    expect((await rpc(path, call, relayHeaders(f.peer), first.session)).status).toBe(404);
+    await rpc(path, call, relayHeaders(f.peer), third.session); expect(f.handler).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects prior-turn relay credentials before a fresh MCP initialization", async () => {
+    const f = await fixture(); const path = f.options.relay.socketPath;
+    distinctFollowup(f.peer);
+    await f.session.startTurn({ message: { role: "user", text: "First turn" } });
+    await f.peer.created.promise;
+    const previousHeaders = relayHeaders(f.peer);
+    const first = await rpc(path, { id: 0, method: "initialize" }, previousHeaders);
+    expect(first.status).toBe(200);
+    const call = { id: 1, method: "tools/call", params: { name: "write_note", arguments: { note: "current authority" } } };
+    expect((await rpc(path, call, previousHeaders, first.session)).status).toBe(200);
+    expect(f.handler).toHaveBeenCalledTimes(1);
+    f.peer.native!.status = "FINISHED"; f.peer.release.resolve();
+    await waitFor(() => f.events.some(event => event.eventType === "turn.completed"));
+    await nextAuthority(f);
+    const currentHeaders = relayHeaders(f.peer);
+    expect((await rpc(path, { id: 2, method: "initialize" }, previousHeaders)).status).toBe(401);
+    expect((await rpc(path, call, previousHeaders, first.session)).status).toBe(401);
+    expect(f.handler).toHaveBeenCalledTimes(1);
+    const current = await rpc(path, { id: 3, method: "initialize" }, currentHeaders);
+    expect(current.status).toBe(200);
+    expect((await rpc(path, call, currentHeaders, current.session)).status).toBe(200);
+    expect(f.handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the current relay capability on active recovery without exposing it in snapshots or events", async () => {
+    const f = await fixture();
+    await f.session.startTurn({ message: { role: "user", text: "Recover this turn" } });
+    await f.peer.created.promise;
+    const headers = relayHeaders(f.peer);
+    const token = headers[RUNNER_TOOL_SCOPE_TOKEN_HEADER]!.slice(7);
+    const snapshot = await f.session.snapshot();
+    await f.session.detachControllerForRestart!(); await f.pump;
+    const restored = (await f.driver.recoverSession(snapshot)).session!; sessions.push(restored);
+    expect((await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" }, headers)).status).toBe(200);
+    expect(JSON.stringify(await restored.read())).not.toContain(token);
+    expect(JSON.stringify(await restored.snapshot())).not.toContain(token);
+    expect(JSON.stringify(f.events)).not.toContain(token);
+    expect((await savedCheckpoint(f.root, restored)).relayTurnToken).toBe(token);
+    expect(f.peer.createAgent).toHaveBeenCalledTimes(1);
+    expect(f.peer.createRun).not.toHaveBeenCalled();
+  });
+
+  it("redacts the current turn capability from provider events and terminal delivery", async () => {
+    const peer = new Peer();
+    peer.streamRun = async function* () {
+      const token = relayHeaders(this)[RUNNER_TOOL_SCOPE_TOKEN_HEADER]!.slice(7);
+      yield { id: "capability-text", event: "assistant", data: { text: `Private value ${token}` } };
+      this.native!.status = "FINISHED"; this.native!.result = token;
+      yield { id: "capability-result", event: "result", data: { runId, status: "FINISHED" } };
+    };
+    const f = await fixture(peer);
+    await f.session.startTurn({ message: { role: "user", text: "Keep private metadata out of output" } });
+    await waitFor(() => f.events.some(event => event.eventType === "turn.completed"));
+    const token = relayHeaders(peer)[RUNNER_TOOL_SCOPE_TOKEN_HEADER]!.slice(7);
+    expect(JSON.stringify(f.events)).not.toContain(token);
+    expect(JSON.stringify(await f.session.read())).not.toContain(token);
+    expect(f.events.find(event => event.eventType === "item.delta")?.payload.text).toBe("Private value [redacted]");
+    expect((await f.session.read()).pendingTerminalDelivery).toMatchObject({ result: "[redacted]" });
+  });
+
+  it("keeps legacy active recovery cleanup-only when its turn capability is absent", async () => {
+    const f = await fixture();
+    await f.session.startTurn({ message: { role: "user", text: "Legacy state" } }); await f.peer.created.promise;
+    const headers = relayHeaders(f.peer); const checkpoint = await savedCheckpoint(f.root, f.session);
+    const snapshot = await f.session.snapshot();
+    await f.session.detachControllerForRestart!(); await f.pump;
+    delete checkpoint.relayTurnToken;
+    const path = join(f.root, (await readdir(f.root)).find(name => /^checkpoint-.*\.json$/.test(name))!);
+    await writeFile(path, JSON.stringify(checkpoint), { mode: 0o600 });
+    const restored = (await f.driver.recoverSession(snapshot)).session!; sessions.push(restored);
+    expect((await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" }, headers)).status).toBe(403);
+    await restored.interrupt();
+    expect(f.peer.cancelRun).toHaveBeenCalledTimes(1);
+    expect(f.peer.createAgent).toHaveBeenCalledTimes(1);
+    expect(f.peer.createRun).not.toHaveBeenCalled();
   });
 
   it("recovers an ambiguous create by saved agent identity, without another create or caller model acknowledgment", async () => {

@@ -34,7 +34,7 @@ async function fixture(phase: "idle" | "terminal" = "terminal") {
   await store.acquire();
   const checkpoint: CursorCloudCheckpoint = { schema: "paperclip.cursor-cloud.checkpoint.v1", driverSessionId: "session", normalizedSessionId: "session",
     bindingDigest: cursorCloudDigest(semanticCanonicalJson(binding)), configDigest: "a".repeat(64), modelDigest: "b".repeat(64), instructionsDigest: "c".repeat(64),
-    instructionsRevisionPending: false, ownerRunId: "owner", agentId: phase === "terminal" ? "bc-provider" : null,
+    instructionsRevisionPending: false, relayTurnToken: null, ownerRunId: "owner", agentId: phase === "terminal" ? "bc-provider" : null,
     runId: phase === "terminal" ? "run-provider" : null, turnId: phase === "terminal" ? "turn-provider" : null,
     phase, pendingOperation: null, idempotencyKey: null, requestedAgentId: null, requestDigest: null, lastEventId: phase === "terminal" ? "opaque" : null, lastEventFingerprints: [],
     sourceSequence: phase === "terminal" ? 1 : 0, terminalStatus: phase === "terminal" ? "ERROR" : null, deadlineAt: null, pendingTerminalDelivery: null, acceptedCompletion: null };
@@ -44,6 +44,16 @@ async function fixture(phase: "idle" | "terminal" = "terminal") {
 }
 
 describe("Cursor Cloud checkpoint ownership", () => {
+  it.each(["", 123, "a".repeat(42), "a".repeat(44), "!".repeat(43)])("rejects malformed persisted turn capabilities (%s)", async token => {
+    const f = await fixture();
+    await f.store.acquire();
+    try {
+      await writeFile(f.store.path, JSON.stringify({ ...f.checkpoint, relayTurnToken: token }), { mode: 0o600 });
+      await expect(f.store.read()).rejects.toThrow("Invalid Cursor Cloud checkpoint");
+    } finally { await f.store.release(); }
+  });
+
+
   it("does not let a delayed dead-owner contender unlink its successor's lock", async () => {
     const f = await fixture();
     const lockPath = `${f.store.path}.lock`;
