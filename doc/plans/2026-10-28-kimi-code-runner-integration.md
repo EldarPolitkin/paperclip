@@ -59,13 +59,88 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Exact model and instructions | local and Daytona | Pending11 pinned native create/load/model/instruction controls passed on both platforms; the current authenticated product matrix remains incomplete | partial |
 | Scoped tools and credentials | local and Daytona | Native v6 credential fences passed; the first pending11 Daytona task received its exact full scoped context result and reached the intended unanswered Write | partial |
 | Ordinary setup | installed local and isolated hosted test | Ordinary connect/save/reopen/Test/run/reconnect and assigned-skill behavior remain required | unattempted |
-| Useful task | local and Daytona | Historical profile9 local files/downloads and one Daytona message passed; pending11 useful-task cells remain | partial |
-| Human input and Stop | local and Daytona | Historical profile9 local lifecycle passed; local and Daytona pending11 native Write Stop passed; semantic lifecycle cells remain | partial |
-| Continuation and child loss | local and Daytona | pending11 local native worker loss passed; remaining restart/question/loss/follow-up cells require current coverage | partial |
+| Useful task | local and Daytona | Pending11 local file editing and all local journeys passed; Daytona file editing remains | partial |
+| Human input and Stop | local and Daytona | All pending11 local human-input and Stop journeys passed; Daytona Write Stop passed and remote semantic lifecycle cells remain | partial |
+| Continuation and child loss | local and Daytona | All pending11 local continuation journeys and authenticated Daytona native worker loss passed; seven remote journeys remain | partial |
 | Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
 | Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the recovery guard passed 65 module tests and selected assembled controls; selector regressions and targeted typechecks passed; final full checks remain | partial |
 
-Current pending11 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
+Current pending11 totals remain 0 fully passed, 7 partial, 1 unattempted of 8
+gates. The two-environment matrix has thirteen distinct passing case records:
+all ten local journeys, plus Daytona native Write Stop, native worker loss, and
+ordinary messaging. Four original cases retain Core/source `0ca0d6b87d6d69b8a900621fb834ed74cb1ae446`
+and suite V4. Nine later cases retain source `d721f2f9052e19370985e53a7493e8792e319313`
+and suite V5. None is relabelled as a later source or suite. Original material
+failures remain failed.
+
+The final local Stop/new/resume result and cleanup passed. Its original strict
+audit rejected the server-only `/new` record because that row retains the default
+legacy field. A separate reviewed classification verifies the saved human command,
+company/task/session generation, the complete two-event terminal record, and the
+unchanged server branch that returns before provider selection or execution. It
+also checks all three actual provider runs against the exact native Kimi11 model,
+profile and scope. The original audit remains failed; the derived classification
+has positive and negative controls, including conflicting duplicate rows in both
+orders. It does not treat the reset operation as inference.
+
+The next Daytona plan-revision attempt failed during shared agent-directory
+adoption before the second provider turn started. Its original failed result,
+cleanup failure and raw package remain unchanged. A real PostgreSQL regression
+reproduced a metadata-only race: the collection worker changes `nextAttemptAt`
+and `updatedAt` between the final predecessor read and the adoption claim. The
+repair in code commit `759aad8f4fa8262b8af6e797617c0d89061681be` locks and rereads
+the predecessor under the existing agent and lease locks, compares its complete
+authority except those two scheduling fields, and retains the original claim
+predicates with the locked timestamp. Eighteen real-database controls and server
+no-emit validation pass, including competing owners, same-baseline receipt or
+checkpoint changes, retirement, canonical changes and foreign scope. The original
+incident did not retain its exact failed predicate, so the reproduced race is not
+claimed as conclusive incident causality. Closed-field conflict diagnostics will
+make a further failure discriminating.
+
+The failed remote campaign's key is revoked. Additional cleanup uses raw sandbox
+resource APIs with an explicit verified organization: a toolbox lookup returning
+404 cannot establish sandbox deletion. Exact filtered inventory exposed two
+archived verification probes omitted by the earlier summary. All eight known
+owned allocations, including preflight, now return authoritative resource 404.
+The provider list retains stale entries; every returned owned entry was separately
+checked through the resource API. The earlier summary and failed cleanup grade
+remain preserved. Future campaigns require the corrected raw-resource cleanup
+and its real-SDK mocked-HTTP regression before allocation.
+
+A separate host prerequisite failed before any test or model request because
+PostgreSQL 18.1 exhausted macOS System V semaphores. Qualification uses a verified
+official PostgreSQL 18.6 build with named POSIX semaphores through an isolated,
+recorded worktree dependency binding. A fresh migrated control plane reached
+health 200 at the actual source revision; a same-cluster SQL check confirmed its
+version, database and empty company schema. Owned processes and ports closed.
+The binding must be restored before normal package validation. Earlier PostgreSQL
+18.1 evidence retains its original environment identity.
+
+The source-mode Product E2E control plane serves the checked-out source. Its
+source revision, production-byte baseline and separately compiled Core artifact
+are distinct roles. Native Mac binaries and the immutable Linux image retain
+actual build source `3a2dc2d78df0da51ef56dd6d898a2993496d3567`; neither is
+relabelled or rebuilt for a Core-only ownership repair.
+
+Next, verify the reviewed repair with one real Daytona plan revision and one
+local plan handoff, including original results, exact provider/control evidence
+and physical cleanup. Then complete the other six remote cases. Retain unaffected
+case evidence only under an explicit source-impact record. Qualification promotion
+remains held until twenty distinct cases and campaign cleanup are verified.
+Afterward build the normal four-platform daemon and eighteen-package distribution,
+verify ordinary installed local setup, and deploy the exact qualified revision
+only to `kimi.test.paperclip.app` for normal configuration, assigned-skill, CSV
+download and persistence checks. Those installation and hosted journeys remain
+required. Production, fleet defaults, stable publication and GitHub merge remain
+outside this handoff.
+
+## Earlier pending11 recovery observations
+
+The following observations retain their original source, artifacts and next-step
+context. The current state above supersedes their campaign instructions.
+
+At this earlier snapshot, pending11 totals: 0 fully passed, 7 partial, 1 unattempted of 8 gates.
 The current twenty-cell matrix has four passing cells on frozen Core/source
 `0ca0d6b87d6d69b8a900621fb834ed74cb1ae446`, pending Kimi11 and suite V4:
 local native Write Stop, local native worker loss, local message-marker, and
@@ -111,7 +186,7 @@ that post-failure recovery does not change the original grade.
 Assigned-skill behavior and ordinary connect/save/reopen/Test/run/reconnect remain
 separate requirements, including the requested hosted test workspace.
 
-## Current state
+### Earlier state before fixture V5
 
 Four current cells passed with independently checked report hashes, native profile/model identity, terminal state, and cleanup. Local Plan acceptance then stopped because the model omitted the required draft marker in its actual `write_document` input; saved bytes, API reads, and the Plan UI matched that input. The strict marker and revision/approval checks remain. A fixture-only successor makes the literal first-line format explicit and increments the Kimi definition to V5; a later passing response does not establish reliability or alter the original failure.
 
@@ -521,7 +596,7 @@ and workers physically retired within five seconds. The model service was simula
 these results do not establish authenticated product acceptance.
 
 To retain native macOS Runner acceptance without changing shared IPC state, an
-official checksummed PostgreSQL18.6 build with named POSIX semaphores passed fresh
+official checksummed PostgreSQL 18.6 build with named POSIX semaphores passed fresh
 initialization, normal migrations, SQL empty-database checks, and cleanup. Only
 this worktree's unshared native dependency entry was temporarily pointed at that
 private build. It was restored before canonical public-package staging. The
@@ -557,7 +632,7 @@ Rust daemon staging, bundled entrypoints, and all three affected immutable
 profile checks passed. The archived installer passed fresh public downloads,
 offline reuse, tamper rejection and cancellation on profile7. Final installed
 CLI/server tarballs remain to be rebuilt and checked. The full repository test
-run continues against the owned migrated PostgreSQL18.6 Docker database; the
+run continues against the owned migrated PostgreSQL 18.6 Docker database; the
 earlier host semaphore and unmigrated-database setup failures remain retained.
 
 The third local message-marker attempt passed all six independent matchers,
