@@ -44,3 +44,11 @@ it("accepts context-bound multiline operator guidance but never self-inability o
   expect(supportedDiagnosticOperator(`Target ${targetUrl}.\nAn operator can run doctor for http://other.invalid in a terminal.`, targetUrl)).toBe(false);
   expect(supportedDiagnosticOperator(`Target ${targetUrl}.\nCould an operator run doctor for that instance?`, targetUrl)).toBe(false);
 });
+
+it.each(["- Run paperclipai doctor.", "1. Run paperclipai doctor.", "Could you run doctor on that instance?", "You can run paperclipai doctor in your terminal."])("uses the visible subject with ordinary operator formatting: %s", line => {
+  expect(supportedDiagnosticOperator(line, targetUrl)).toBe(true);
+});
+it("does not redirect doctor guidance to the chat controller or reverse a prohibition", () => {
+  expect(supportedDiagnosticOperator("You can run doctor on the controller.", targetUrl)).toBe(false);
+  expect(supportedDiagnosticOperator(`You should not run doctor for ${targetUrl}.`, targetUrl)).toBe(false);
+});
