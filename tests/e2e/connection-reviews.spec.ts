@@ -329,6 +329,9 @@ for (const journey of [
       } else {
         await expect(resolvedReview.getByText(journey === "decline" ? "Declined" : "Execution failed", { exact: false })).toBeVisible();
       }
+      await expect(page.getByTestId("task-chat-history-content")).toBeVisible({
+        timeout: 30_000,
+      });
       await expect(resolvedReview).toContainText("List fixture pages");
       const persistedReply = page.locator(`[id=${JSON.stringify(`comment-${reply.id}`)}]`);
       await expect(persistedReply).toBeVisible();
