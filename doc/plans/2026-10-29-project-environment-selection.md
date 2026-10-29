@@ -82,3 +82,11 @@ public fixtures and the PR description.
   existing project; updates retain project workspace policy enforcement. The
   20-case route suite passes, as do the seven selection guards. Server typecheck
   and build pass after this correction.
+
+- Final repository review follow-ups: unrelated policy edits no longer revalidate
+  an unchanged archived target; unresolved environment reads preserve the saved
+  selection without a false unavailable warning; the acquisition helper requires
+  and explicitly forwards the atomic binding guard. Both behavior regressions
+  were red first. The focused set passes 84 cases, with the 21 route cases rerun
+  using a 60-second cold-import budget after a busy-host timeout. Full typecheck,
+  build and token/map checks pass.

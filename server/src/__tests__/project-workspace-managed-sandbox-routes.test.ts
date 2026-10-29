@@ -252,6 +252,19 @@ describe("project workspace host-path floor", () => {
     expect(mockEnvironmentService.getById).not.toHaveBeenCalled();
   });
 
+  it("allows unrelated policy edits while the unchanged environment is archived", async () => {
+    const environmentId = "11111111-1111-4111-8111-111111111111";
+    mockProjectService.getById.mockResolvedValue(buildProject({ executionWorkspacePolicy: { enabled: true, environmentId, sharedWorkspaceConcurrency: "auto" } }));
+    mockEnvironmentService.getById.mockResolvedValue({ id: environmentId, driver: "sandbox", status: "archived", config: { provider: "daytona" } });
+    const executionWorkspacePolicy = { enabled: true, environmentId, sharedWorkspaceConcurrency: "serialize" };
+    mockProjectService.update.mockResolvedValue(buildProject({ executionWorkspacePolicy }));
+    const app = await createApp();
+    const res = await request(app).patch("/api/projects/project-1").send({ executionWorkspacePolicy });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockProjectService.update).toHaveBeenCalledWith("project-1", { executionWorkspacePolicy });
+    expect(mockEnvironmentService.getById).not.toHaveBeenCalled();
+  });
+
   it("requires workspace-write authority to change a project environment", async () => {
     const environmentId = "11111111-1111-4111-8111-111111111111";
     mockAccessService.decide.mockImplementation(async input => ({ allowed: input.action !== "project:write_workspace", explanation: "Workspace write permission required." }));

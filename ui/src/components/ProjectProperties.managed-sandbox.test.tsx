@@ -84,12 +84,12 @@ afterEach(() => {
 });
 
 /** Pass `null` for `experimentalSettings` to render with the policy unresolved. */
-function render(project: Project, experimentalSettings: Record<string, unknown> | null, environments: Environment[] = [], onFieldUpdate = vi.fn()) {
+function render(project: Project, experimentalSettings: Record<string, unknown> | null, environments: Environment[] | null = [], onFieldUpdate = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (experimentalSettings) {
     client.setQueryData(queryKeys.instance.experimentalSettings, experimentalSettings);
   }
-  client.setQueryData(queryKeys.environments.list("company-1"), environments);
+  if (environments !== null) client.setQueryData(queryKeys.environments.list("company-1"), environments);
   act(() => {
     root.render(
       <QueryClientProvider client={client}>
@@ -221,5 +221,16 @@ describe("ProjectProperties project environment", () => {
     render(project, { enableEnvironments: true }, [coding]);
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="Project environment"]')?.value).toBe("removed-env");
     expect(container.textContent).toContain("Unavailable environment");
+  });
+
+  it("preserves the saved selection without an unavailable warning while environments load", () => {
+    const project = makeProject(makeCodebase());
+    project.executionWorkspacePolicy = { enabled: false, environmentId: coding.id };
+    render(project, { enableEnvironments: true }, null);
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Project environment"]');
+    expect(select?.value).toBe(coding.id);
+    expect(select?.disabled).toBe(true);
+    expect(container.textContent).not.toContain("Unavailable environment");
+    expect(container.textContent).not.toContain("Choose an available environment");
   });
 });

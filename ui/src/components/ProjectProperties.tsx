@@ -265,7 +265,7 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
       queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(selectedCompanyId) });
     },
   });
-  const { data: environments } = useQuery({
+  const { data: environments, isError: environmentsError } = useQuery({
     queryKey: queryKeys.environments.list(selectedCompanyId!),
     queryFn: () => environmentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && environmentsEnabled,
@@ -312,8 +312,9 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
   });
   const showExecutionWorkspaceEnvironmentControl = environmentsEnabled &&
     (runSelectableEnvironments.length > 0 || executionWorkspaceEnvironmentId !== "");
-  const projectEnvironmentUnavailable = executionWorkspaceEnvironmentId !== "" &&
+  const projectEnvironmentMissing = executionWorkspaceEnvironmentId !== "" &&
     !runSelectableEnvironments.some((environment) => environment.id === executionWorkspaceEnvironmentId);
+  const projectEnvironmentUnavailable = environments !== undefined && projectEnvironmentMissing;
 
   const invalidateProject = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(project.id) });
@@ -746,7 +747,7 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
               id="project-environment"
               aria-label="Project environment"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              disabled={!onUpdate && !onFieldUpdate}
+              disabled={(!onUpdate && !onFieldUpdate) || environments === undefined}
               value={executionWorkspaceEnvironmentId}
               onChange={(event) => commitField("execution_workspace_environment", {
                 executionWorkspacePolicy: {
@@ -762,8 +763,8 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
                   {environmentDisplayLabel(environment)}
                 </option>
               ))}
-              {projectEnvironmentUnavailable ? (
-                <option value={executionWorkspaceEnvironmentId} disabled>Unavailable environment</option>
+              {projectEnvironmentMissing ? (
+                <option value={executionWorkspaceEnvironmentId} disabled>{projectEnvironmentUnavailable ? "Unavailable environment" : "Saved environment"}</option>
               ) : null}
             </select>
             <p className="text-xs text-muted-foreground">
@@ -773,6 +774,7 @@ export function ProjectProperties({ project, repositories, onUpdate, onFieldUpda
             {projectEnvironmentUnavailable ? (
               <p role="alert" className="text-xs text-destructive">Choose an available environment or inherit the default.</p>
             ) : null}
+            {environmentsError ? <p role="alert" className="text-xs text-destructive">Failed to load environments.</p> : null}
           </div>
         ) : null}
 

@@ -509,10 +509,10 @@ export function projectRoutes(db: Db) {
     if (!existing) return;
     if (!(await assertProjectReadAllowed(req, res, existing))) return;
     const body = { ...req.body };
-    if (body.executionWorkspacePolicy !== undefined
-      && (readProjectPolicyEnvironmentId(body.executionWorkspacePolicy) ?? null)
-        !== (readProjectPolicyEnvironmentId(existing.executionWorkspacePolicy) ?? null)
-      && !(await assertProjectWorkspaceWriteAllowed(req, res, existing))) return;
+    const nextEnvironmentId = readProjectPolicyEnvironmentId(body.executionWorkspacePolicy);
+    const environmentChanged = body.executionWorkspacePolicy !== undefined
+      && (nextEnvironmentId ?? null) !== (readProjectPolicyEnvironmentId(existing.executionWorkspacePolicy) ?? null);
+    if (environmentChanged && !(await assertProjectWorkspaceWriteAllowed(req, res, existing))) return;
     if (body.visibility !== undefined) {
       if (!(await assertCanManageProjectPrivacy(req, res, existing))) return;
     }
@@ -521,10 +521,7 @@ export function projectRoutes(db: Db) {
       req,
       collectProjectExecutionWorkspaceCommandPaths(body.executionWorkspacePolicy),
     );
-    await assertProjectEnvironmentSelection(
-      existing.companyId,
-      readProjectPolicyEnvironmentId(body.executionWorkspacePolicy),
-    );
+    if (environmentChanged) await assertProjectEnvironmentSelection(existing.companyId, nextEnvironmentId);
     if (typeof body.archivedAt === "string") {
       body.archivedAt = new Date(body.archivedAt);
     }
