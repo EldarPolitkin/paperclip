@@ -5450,6 +5450,8 @@
       "chat-catalog-domains/runtime-support.ts",
       "chat-catalog-domains/identity-support.ts",
       "registered-artifact.ts",
+      "catalog.ts",
+      "../acpx-qualification-models.ts",
       "chat-scenarios/steering.yaml"
     ],
     "oracleVersion": "paperclip.chat-catalog.runtime.v2",

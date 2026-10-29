@@ -4,12 +4,13 @@ import type { IssueQueuedCommentQueue } from "../../../packages/shared/src/types
 import { pollUntil } from "../api.js";
 import { submitTaskReply } from "../user-actions.js";
 import { readRegisteredArtifacts } from "../registered-artifact.js";
+import { extendedHarnessProfiles } from "../catalog.js";
 import { checks, type Entity } from "./internal-support.js";
 import { probeAgentPermission, cleanupIdentityProbes } from "./identity-support.js";
 import { busyRuntimeWorker, releaseRuntimeWorker } from "./runtime-busy-worker.js";
 import { renderRuntimeArtifact } from "./runtime-rendered-artifact.js";
 import { runtimeQueueCases } from "./runtime-queue.js";
-import { runtimeDefinition, observeRuntime, runtimeObservation } from "./runtime-support.js";
+import { runtimeDefinition, runtimeWorker, observeRuntime, runtimeObservation } from "./runtime-support.js";
 export function isBlueColor(color: string) {
   const parts = color.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)/i);
   if (!parts) return false;
@@ -47,7 +48,23 @@ export function gradeActiveSteering(value: unknown) {
   return c.result();
 }
 export const runtimeActiveSteeringCases = [runtimeDefinition("steering.steer-active", async ctx => {
-  const state: Record<string, unknown> = await busyRuntimeWorker(ctx), task = state.task as Entity, source = ctx.input.page.url();
+  const profile = extendedHarnessProfiles.find(row => row.id === "runner-acpx-pi");
+  if (!profile || profile.model !== "openrouter/anthropic/claude-sonnet-4.6" || profile.credential !== "OPENROUTER_API_KEY")
+    throw new Error("Active steering requires the fixed native Pi feature profile");
+  const feature = profile.buildAgent({ environmentId: ctx.input.fixtures.environment.id, environmentFixtureId: ctx.input.execution.environment.id,
+    workspacePath: ctx.input.workspacePath, secretRefs: ctx.input.fixtures.secretRefs, executionId: ctx.input.nonce });
+  const worker = await runtimeWorker(ctx, "Morgan", { adapterType: feature.adapterType, adapterConfig: feature.adapterConfig });
+  const saved = worker.adapterConfig;
+  if (worker.companyId !== ctx.input.fixtures.company.id || worker.reportsTo !== ctx.input.fixtures.agent.id
+    || worker.defaultEnvironmentId !== ctx.input.fixtures.environment.id || worker.adapterType !== "paperclip_runner"
+    || saved?.provider !== "acpx" || saved.acpxAgent !== "pi" || saved.model !== profile.model)
+    throw new Error("Saved active-steering feature worker differs from its selected native Pi profile");
+  const state: Record<string, unknown> = await busyRuntimeWorker(ctx, { worker }), task = state.task as Entity, source = ctx.input.page.url();
+  await ctx.input.evidence("runtime-steering-feature-profile.json", {
+    scope: "configured-profile-readback", controllerProfile: ctx.input.execution.profile.id, controllerModel: ctx.input.execution.profile.model,
+    featureProfile: profile.id, featureProvider: saved.provider, featureAgent: saved.acpxAgent, featureModel: saved.model,
+    actualInferenceUsage: "Retained separately in the real per-run evidence; not established by this configuration receipt",
+  });
   await ctx.input.page.goto(`/${ctx.input.fixtures.company.issuePrefix}/issues/${task.identifier ?? task.id}`, { waitUntil: "domcontentloaded" });
   await submitTaskReply(ctx.input.page, direction);
   const before = await pollUntil({ label: "Actual native same-turn steering advertised for saved human blue message", deadlineAt: Date.now() + 30_000,
@@ -61,7 +78,7 @@ export const runtimeActiveSteeringCases = [runtimeDefinition("steering.steer-act
 }, gradeActiveSteering, {
   authentication: "human-session", expectedRunCount: 3, minimumRunCount: 2, attemptTimeoutMs: 720_000,
   setupPolicy: runtimeQueueCases[0]!.setupPolicy, verifySetup: runtimeQueueCases[0]!.verifySetup,
-  sourceFiles: ["chat-catalog-domains/runtime-active-steering.ts", "chat-catalog-domains/runtime-rendered-artifact.ts", "chat-catalog-domains/runtime-queue.ts", "chat-catalog-domains/runtime-busy-worker.ts", "chat-catalog-domains/runtime-support.ts", "chat-catalog-domains/identity-support.ts", "registered-artifact.ts", "chat-scenarios/steering.yaml"],
+  sourceFiles: ["chat-catalog-domains/runtime-active-steering.ts", "chat-catalog-domains/runtime-rendered-artifact.ts", "chat-catalog-domains/runtime-queue.ts", "chat-catalog-domains/runtime-busy-worker.ts", "chat-catalog-domains/runtime-support.ts", "chat-catalog-domains/identity-support.ts", "registered-artifact.ts", "catalog.ts", "../acpx-qualification-models.ts", "chat-scenarios/steering.yaml"],
   async act(ctx, state) {
     await pollUntil({ label: "Canonical steering guidance while the original native owner remains active", deadlineAt: Date.now() + 150_000,
       load: async () => { await ctx.refreshIssue(); return { source: ctx.issue(), runs: await ctx.allRuns() }; },

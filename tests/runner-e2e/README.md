@@ -3105,3 +3105,13 @@ they are not reported as charges or converted into reviewed lifecycle bounds.
 This mode therefore does not certify a full-lifecycle operating-cost ceiling.
 Omitting the policy preserves the stricter full-accounting gate. Historical
 journals and their holds are not rewritten by changing future campaign policy.
+
+### Active steering feature profile
+
+`steering.steer-active` keeps its OpenCode/DeepSeek1017 controller and uses the
+explicit native Pi feature profile with OpenRouter Sonnet4.6 for Morgan. It still
+requires live negotiated steering, the saved human control, same-run delivery
+evidence and the actual blue artifact, or the original visible-rejection branch.
+The existing source-built Pi provisioner must supply its verified asset closure
+on the execution host; this fixture does not install it or change workflow delivery.
+Its original run/message limits and 720-second attempt remain unchanged.
