@@ -248,17 +248,19 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
     assert.ok(at > 0 && compiled.lastIndexOf(boundary) === at && Buffer.byteLength(compiled) <= 16 * 1024 * 1024);
     const module = { exports: {} };
     new Function("require", "module", "exports", "__filename", "__dirname", compiled.slice(0, at).replace(/^#![^\n]*\n/, "\n")
-      + "\nmodule.exports={verifyKimiInstallation,QUALIFIED_ACPX_PROFILES,acquireAcpxProviderLifetimeLease};")(
+      + "\nmodule.exports={verifyKimiInstallation,QUALIFIED_ACPX_PROFILES,acquireAcpxProviderLifetimeLease,createAcpxSidecarHostEnvironment,createSanitizedAcpxSpawnInput};")(
       createRequire(cli), module, module.exports, cli, dirname(cli));
     compiledFactory = module.exports;
   }
-  const [{ verifyKimiInstallation }, { QUALIFIED_ACPX_PROFILES }, { kimiManagedConfiguration }, instructionModule, { createKimiMessageProjection }, { normalizeAcpxPermission }] = await Promise.all([
+  const [{ verifyKimiInstallation }, { QUALIFIED_ACPX_PROFILES }, { kimiManagedConfiguration }, instructionModule, { createKimiMessageProjection }, { normalizeAcpxPermission }, environmentModule, { configuredEnvironmentProjection, CONFIGURED_ENVIRONMENT_KEYS }] = await Promise.all([
     tsImport("../src/drivers/acpx/kimi-installation.ts", import.meta.url),
     tsImport("../src/drivers/acpx/qualified-profiles.ts", import.meta.url),
     tsImport("../src/drivers/acpx/kimi-config.ts", import.meta.url),
     tsImport("../src/drivers/acpx/kimi-instructions.ts", import.meta.url),
     tsImport("../src/drivers/acpx/kimi-message-boundary.ts", import.meta.url),
     tsImport("../src/drivers/acpx/acp-permission-adapter.ts", import.meta.url),
+    tsImport("../src/drivers/acpx/environment.ts", import.meta.url),
+    tsImport("../src/configured-environment.ts", import.meta.url),
   ]);
   const { createAcpRuntime, createFileSessionStore } = await import(pathToFileURL(join(packageRoot, "node_modules/acpx/dist/runtime.js")));
   const root = await realpath(await mkdtemp(join(tmpdir(), "kimi-simulated-model-peer-")));
@@ -270,7 +272,15 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
   const argumentsObject = { payload: "café 🧪\n${literal}", nested: { count: 0, empty: {}, flag: false } };
   const toolReceipt = sha(JSON.stringify(argumentsObject));
   const deniedPath = join(workspace, "denied-peer.txt");
-  const bashArguments = { command: 'if test -n "${KIMI_API_KEY+x}"; then printf "PROVIDER_KEY_PRESENT"; exit 1; fi; if test -n "${PAPERCLIP_KIMI_INSTRUCTIONS+x}"; then printf "PRIVATE_BINDING_PRESENT"; exit 1; fi; if test "$PAPERCLIP_TASK_SCOPED" != "assigned-task-canary"; then printf "TASK_VARIABLE_MISSING"; exit 1; fi; printf "KIMI_CHILD_CREDENTIAL_FENCE_OK"', timeout: 5 };
+  const notificationEnvironment = {
+    PAPERCLIP_RUNTIME_NOTIFICATION_CONTEXT: join(root, "controlled-notification-context.json"),
+    PAPERCLIP_RUNTIME_NOTIFICATION_HELPER: join(packageRoot, "dist/bin/paperclip-runnerd"),
+  };
+  await writeFile(notificationEnvironment.PAPERCLIP_RUNTIME_NOTIFICATION_CONTEXT, '{"controlledEnvironmentOnly":true}\n', { flag: "wx", mode: 0o600 });
+  await access(notificationEnvironment.PAPERCLIP_RUNTIME_NOTIFICATION_HELPER);
+  const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  const notificationChecks = Object.entries(notificationEnvironment).map(([key, value]) => `if test "$${key}" != ${shellQuote(value)}; then printf "NOTIFICATION_DISCOVERY_CHANGED"; exit 1; fi; `).join("");
+  const bashArguments = { command: 'if test -n "${KIMI_API_KEY+x}"; then printf "PROVIDER_KEY_PRESENT"; exit 1; fi; if test -n "${PAPERCLIP_KIMI_INSTRUCTIONS+x}"; then printf "PRIVATE_BINDING_PRESENT"; exit 1; fi; if test "$PAPERCLIP_TASK_SCOPED" != "assigned-task-canary"; then printf "TASK_VARIABLE_MISSING"; exit 1; fi; ' + notificationChecks + 'printf "KIMI_CHILD_CREDENTIAL_FENCE_OK"', timeout: 5 };
   const modelRequests = [], mcpCalls = [], permissions = [], deliveries = [], nativeMessages = [], owners = [];
   let scenario = "echo", modelStep = 0, peerFailure, permissionGate;
   const complete = (response, chunks) => {
@@ -322,7 +332,7 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
             assert.ok(JSON.stringify(result).includes(toolReceipt), `MCP receiver result reached the next native request: ${JSON.stringify({ result, mcpCalls: mcpCalls.length, permissions })}`);
             assert.ok(value.messages.some(message => message.role === "tool" && message.tool_call_id === "peer-empty" && JSON.stringify(message).includes("EMPTY_TOOL_ACCEPTED")), "zero-argument MCP result returned to the native model");
           }
-          else if (scenario === "bash") assert.match(result.content, /^(?:Wall time: [0-9.]+ seconds\n)?KIMI_CHILD_CREDENTIAL_FENCE_OK\n?$/, "native Bash excluded provider/private credentials and retained the assigned task variable");
+          else if (scenario === "bash") assert.match(result.content, /^(?:Wall time: [0-9.]+ seconds\n)?KIMI_CHILD_CREDENTIAL_FENCE_OK\n?$/, "native Bash excluded provider/private credentials and retained the assigned task variable plus owned Runner notification discovery");
           else assert.match(JSON.stringify(result), /denied|rejected|approval/i);
           complete(response, [{ choices: [{ index: 0, delta: { content: scenario === "echo" ? "PEER_ECHO_OK café" : scenario === "bash" ? "PEER_BASH_OK" : "PEER_DENIED_OK" } }] },
             { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 } }]);
@@ -378,12 +388,28 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
       ? await compiledFactory.verifyKimiInstallation(compiledFactory.QUALIFIED_ACPX_PROFILES.kimi)
       : await verifyKimiInstallation(QUALIFIED_ACPX_PROFILES.kimi);
     const store = createFileSessionStore({ stateDir: join(root, "acpx-state") });
+    const taskEnvironment = configuredEnvironmentProjection({ PAPERCLIP_TASK_SCOPED: "assigned-task-canary",
+      ...Object.fromEntries(Object.keys(notificationEnvironment).map(key => [key, "forged-task-override"])) });
+    for (const key of Object.keys(notificationEnvironment)) assert.ok(!Object.hasOwn(taskEnvironment, key));
+    const explicitEnvironment = { ...taskEnvironment, ...notificationEnvironment, PATH: "/usr/bin:/bin", LANG: "C.UTF-8", KIMI_API_KEY: "simulated-peer-not-a-credential" };
+    const sessionId = "controlled-native-environment";
+    const compose = compiledFactory ?? environmentModule;
+    const sidecarEnvironment = compose.createAcpxSidecarHostEnvironment({ ...explicitEnvironment,
+      [environmentModule.ACPX_CREDENTIAL_BINDING_ENV]: environmentModule.createAcpxCredentialBinding(explicitEnvironment, "kimi", sessionId) }, "kimi", sessionId);
+    const launchEnvironment = compose.createSanitizedAcpxSpawnInput(sidecarEnvironment, "kimi").env;
+    for (const [key, value] of Object.entries(notificationEnvironment)) {
+      assert.equal(launchEnvironment[key], value);
+      assert.throws(() => compose.createSanitizedAcpxSpawnInput({ ...sidecarEnvironment,
+        [CONFIGURED_ENVIRONMENT_KEYS]: JSON.stringify([key]), [key]: "forged-task-override" }, "kimi"), /configured environment projection/);
+    }
+    assert.equal(launchEnvironment.PAPERCLIP_TASK_SCOPED, "assigned-task-canary");
+    assert.equal(launchEnvironment.KIMI_API_KEY, "simulated-peer-not-a-credential");
     const spawnNative = (lease, owner) => {
-      const child = lease.spawn([], { cwd: workspace, stdio: "pipe", env: { PATH: "/usr/bin:/bin", HOME: home,
-        LANG: "C.UTF-8", CI: "1", NO_COLOR: "1", TERM: "dumb", KIMI_CODE_HOME: home,
-        KIMI_API_KEY: "simulated-peer-not-a-credential", KIMI_CODE_NO_AUTO_UPDATE: "1", KIMI_DISABLE_TELEMETRY: "1",
+      const child = lease.spawn([], { cwd: workspace, stdio: "pipe", env: { ...launchEnvironment, HOME: home,
+        CI: "1", NO_COLOR: "1", TERM: "dumb", KIMI_CODE_HOME: home,
+        KIMI_CODE_NO_AUTO_UPDATE: "1", KIMI_DISABLE_TELEMETRY: "1",
         KIMI_CODE_WATCH: "0", KIMI_DISABLE_CRON: "1", PAPERCLIP_KIMI_INSTRUCTIONS: binding.payload,
-        PAPERCLIP_TASK_SCOPED: "assigned-task-canary", ...(selectorPeer ? { PAPERCLIP_FAULT_ENV_CANARY: "must-not-appear-in-observed-argv" } : {}) } },
+        ...(selectorPeer ? { PAPERCLIP_FAULT_ENV_CANARY: "must-not-appear-in-observed-argv" } : {}) } },
       owner.fence ? { credentialFenceFds: owner.fence.lifetimeFenceFds, activateCredentialFenceOwner: pid => owner.fence.activateLifetimeOwner(pid) } : undefined);
       owner.children.push(child);
       owner.completions.push(new Promise((resolve, reject) => { child.once("close", resolve); child.once("error", reject); }));
@@ -508,7 +534,7 @@ test("real pinned Kimi and ACPX exchange instructions/tools/denial/errors with a
     await closeOwner(second);
     assert.ok(owners.every(owner => owner.children.every(child => child.exitCode !== null || child.signalCode !== null)));
     await assert.rejects(access(deniedPath), { code: "ENOENT" });
-    t.diagnostic("SIMULATED provider service; real pinned Kimi 2.3.3 + ACPX manager: 7 native model requests with provider auth intact, exact create/resume instruction suffix, native UUID start/end separates pre-tool commentary from final text despite reused model response IDs, actual provider projection yields toolUse/stop boundaries, two MCP JSON/result round trips including terminal {}, native Bash excludes provider/private credentials and retains an assigned task variable, rejected Write with no file, typed provider failure, owned process closure; zero external model calls");
+    t.diagnostic("SIMULATED provider service; real pinned Kimi 2.3.3 + ACPX manager: 7 native model requests with provider auth intact, exact create/resume instruction suffix, native UUID start/end separates pre-tool commentary from final text despite reused model response IDs, actual provider projection yields toolUse/stop boundaries, two MCP JSON/result round trips including terminal {}, native Bash excludes provider/private credentials and retains the assigned task variable and exact owned Runner notification paths after actual configured-environment projection rejected forged task overrides, rejected Write with no file, typed provider failure, owned process closure; zero external model calls");
     if (process.env.PAPERCLIP_TEST_KIMI_LIFECYCLE_PEER === "1") {
       const { readProcessTable, observeDescendantProcessTree } = await tsImport("../../../tests/runner-e2e/process-tree.ts", import.meta.url);
       const bounded = async (promise, label, milliseconds = 5_000) => {
