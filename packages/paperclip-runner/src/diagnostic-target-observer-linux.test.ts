@@ -5,7 +5,7 @@ import { readFile, readlink, mkdtemp, writeFile, rm, lstat } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { nativeHealthResponse, processScalar, type ProcessScalar, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
+import { nativeHealthResponse, processScalar, parseObserverDiagnostic, type ProcessScalar, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 
 /** Existing PR Runner Vitest source plus observed public-pr-x64 job metadata.
  * These context signals are not independent AWS qualification: the final CI
@@ -184,6 +184,15 @@ async function observations(output: string): Promise<PeerObservation[]> {
   }
   throw new Error("No real reverse-socket observation within unchanged capture budget");
 }
+async function diagnosticSnapshot(output: string) {
+  try {
+    const file = `${output}.diagnostic.json`, meta = await lstat(file);
+    if (!meta.isFile() || meta.isSymbolicLink() || meta.uid !== process.getuid?.() || (meta.mode & 0o077) || meta.size > 16384) return { state: "UNAVAILABLE" };
+    const bytes = await readFile(file); if (bytes.length !== meta.size || bytes.length > 16384) return { state: "UNAVAILABLE" };
+    const diagnostic = parseObserverDiagnostic(JSON.parse(bytes.toString("utf8")));
+    return diagnostic ? { state: "PRESENT", diagnostic } : { state: "UNAVAILABLE" };
+  } catch { return { state: "UNAVAILABLE" }; }
+}
 interface Fixture { root: string; ticks: number; runner: ProcessScalar; target: Owned; providers: Owned[]; clients: ProcessScalar[]; output: string; port: number }
 const ownedFixtures: Fixture[] = [];
 async function fixture(): Promise<Fixture> {
@@ -242,6 +251,8 @@ afterEach(async () => {
   if (!eligible) return;
   let unknownCleanup = false; const awaitingDrain = new Set<ChildProcess>();
   for (const f of ownedFixtures.splice(0).reverse()) {
+    // Closed counters only, before any removal, including failed capture/cleanup.
+    console.info("OBSERVER_CALIBRATION_DIAGNOSTIC " + JSON.stringify(await diagnosticSnapshot(f.output)));
     for (const p of f.providers) {
       awaitingDrain.add(p.child);
       try {

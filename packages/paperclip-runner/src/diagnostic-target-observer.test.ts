@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
+import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, parseObserverDiagnostic, type SocketDiagnostic, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 function kernel() {
   const data = new Map<string, string>(), dirs = new Map<string, string[]>(), links = new Map<string, string>(); let now = 0;
   data.set("/proc/stat", "btime 1000000000\n"); dirs.set("/proc", ["90", "200", "205", "210", "220"]);
@@ -74,4 +74,45 @@ it("requires the full reverse tuple including normalized loopback address famili
   expect(peerInode([header + mapped], { ...socket, localAddress: "::ffff:127.0.0.1", remoteAddress: "::ffff:127.0.0.1" })).toBe("555");
   expect(peerInode([header + mapped], socket)).toBe("555");
   expect(peerInode([header + mapped], { ...socket, remotePort: 40001 })).toBeUndefined();
+});
+
+describe("content-free observer failure diagnostics", () => {
+  it.each(["PEER_INODE_MISSING", "PROC_DENIED", "DEADLINE_OR_OP_LIMIT", "AMBIGUOUS_OWNER", "GENERATION_CHANGED"] as const)("reports %s without turning unknown into proof", async expected => {
+    const k = kernel(), reports: SocketDiagnostic[] = [];
+    if (expected === "PEER_INODE_MISSING") k.data.set("/proc/90/net/tcp", "sl local_address rem_address st\n");
+    if (expected === "PROC_DENIED") k.port.read = async () => { throw Object.assign(new Error("WITHHELD/path/body"), { code: "EACCES" }); };
+    if (expected === "DEADLINE_OR_OP_LIMIT") { let n = 0; k.port.now = () => ++n * 100; }
+    if (expected === "AMBIGUOUS_OWNER") { k.dirs.set("/proc/210/fd", ["7"]); k.links.set("/proc/210/fd/7", "socket:[555]"); }
+    if (expected === "GENERATION_CHANGED") { const read = k.port.read; let n = 0; k.port.read = async p => { const v = await read(p); return p === "/proc/220/stat" && ++n > 1 ? v.replace(/22000$/, "99999") : v; }; }
+    expect(await observeSocket(k.port, socket, 90, 100, d => reports.push(d))).toBeUndefined();
+    expect(reports).toHaveLength(1); expect(reports[0]!.outcome).toBe(expected);
+    expect(Object.keys(reports[0]!).sort()).toEqual(["elapsedMs", "operations", "outcome", "procDeniedCount"]);
+    expect(JSON.stringify(reports)).not.toMatch(/WITHHELD|path|body|stack|EACCES/);
+  });
+  it("persists channel and matched-finish counters when ownership is unknown, without reading content", async () => {
+    const k = kernel(), callbacks = new Map<string, (m: unknown) => void>(), saved: unknown[] = [], diagnostics: unknown[] = [];
+    k.data.set("/proc/90/net/tcp", "sl local_address rem_address st\n");
+    const close = attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, armed: () => true, on: (n, cb) => callbacks.set(n, cb), off: n => { callbacks.delete(n); }, save: async rows => { saved.push(rows); }, saveDiagnostic: async d => { diagnostics.push(d); } });
+    const forbidden = () => { throw new Error("WITHHELD"); };
+    const m = { request: { method: "GET", url: "/api/health?token=WITHHELD", get headers() { return forbidden(); }, get body() { return forbidden(); } }, response: { statusCode: 503, get body() { return forbidden(); } }, socket };
+    callbacks.get("http.server.request.start")!(m); callbacks.get("http.server.response.finish")!(m);
+    const d = await close(); expect(d.requestStart).toBe(1); expect(d.matchedFinish).toBe(1); expect(d.outcomes.PEER_INODE_MISSING).toBe(1); expect(saved).toEqual([]);
+    expect(parseObserverDiagnostic(diagnostics.at(-1))).toEqual(d); expect(JSON.stringify(diagnostics)).not.toMatch(/WITHHELD|token|headers|body|api\/health/);
+  });
+  it("distinguishes no channel, malformed payload and output failure without throwing into the app", async () => {
+    const k = kernel(), callbacks = new Map<string, (m: unknown) => void>();
+    const open = (save = async () => {}) => attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, armed: () => true, on: (n, cb) => callbacks.set(n, cb), off: n => { callbacks.delete(n); }, save, saveDiagnostic: async () => {} });
+    expect((await open()()).outcomes.NO_CHANNEL_OBSERVED).toBe(1);
+    const malformed = open(); expect(() => callbacks.get("http.server.request.start")!({ get request() { throw new Error("WITHHELD"); } })).not.toThrow();
+    expect((await malformed()).outcomes.PAYLOAD_SHAPE_MISMATCH).toBe(1);
+    const failed = open(async () => { throw new Error("WITHHELD write target"); });
+    const m = { request: { method: "GET", url: "/api/health" }, response: { statusCode: 503 }, socket };
+    callbacks.get("http.server.request.start")!(m); callbacks.get("http.server.response.finish")!(m);
+    const d = await failed(); expect(d.outcomes.OWNERSHIP_PROVEN).toBe(1); expect(d.outputWriteFailures).toBe(1); expect(d.outcomes.OUTPUT_WRITE_FAILED).toBe(1);
+    expect(JSON.stringify(d)).not.toContain("WITHHELD");
+  });
+  it("refuses arbitrary diagnostic keys, values and unbounded counters", async () => {
+    const k = kernel(); const d = await attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, armed: () => true, on: () => {}, off: () => {}, save: async () => {} })();
+    for (const v of [{ ...d, body: "WITHHELD" }, { ...d, requestStart: Infinity }, { ...d, requestStart: 65536 }, { ...d, channelState: "WITHHELD" }, { ...d, outcomes: { ...d.outcomes, WITHHELD: 1 } }]) expect(parseObserverDiagnostic(v)).toBeUndefined();
+  });
 });
