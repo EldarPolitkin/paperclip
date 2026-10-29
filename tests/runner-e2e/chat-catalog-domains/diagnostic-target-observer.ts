@@ -19,6 +19,7 @@ export function processScalar(pid: number, stat: string, status: string, boot: s
   return { pid, parent: Number(fields[1]), uid: Number(uid), ticks: ticks!, namespace,
     born: new Date(Number(BigInt(btime) * 1000n + BigInt(ticks!) * 1000n / BigInt(hz))).toISOString() };
 }
+function socketAddress(raw?: string) { return raw === "::1" ? "loopback6" : raw === "127.0.0.1" || raw === "::ffff:127.0.0.1" ? "loopback4" : undefined; }
 function tcpAddress(raw: string): string | undefined {
   if (raw === "0100007F" || raw === "0000000000000000FFFF00000100007F") return "loopback4";
   if (raw === "00000000000000000000000001000000") return "loopback6";
@@ -28,7 +29,7 @@ export function peerInode(tables: string[], socket: SocketScalar): string | unde
   const matches: string[] = [];
   for (const table of tables) for (const line of table.trim().split("\n").slice(1)) {
     const f = line.trim().split(/\s+/), local = f[1]?.split(":"), remote = f[2]?.split(":");
-    if (f[3] === "01" && tcpAddress(local?.[0] ?? "") && tcpAddress(remote?.[0] ?? "")
+    if (f[3] === "01" && tcpAddress(local?.[0] ?? "") === socketAddress(socket.remoteAddress) && tcpAddress(remote?.[0] ?? "") === socketAddress(socket.localAddress)
       && Number.parseInt(local![1]!, 16) === socket.remotePort && Number.parseInt(remote![1]!, 16) === socket.localPort && /^\d+$/.test(f[9] ?? "")) matches.push(f[9]!);
   }
   return matches.length === 1 ? matches[0] : undefined;

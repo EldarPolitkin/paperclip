@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachTargetObserver, healthRequest, observeSocket, nativeHealthResponse, type KernelPort, type PeerObservation } from "./diagnostic-target-observer.js";
+import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, type KernelPort, type PeerObservation } from "./diagnostic-target-observer.js";
 function kernel() {
   const data = new Map<string, string>(), dirs = new Map<string, string[]>(), links = new Map<string, string>(); let now = 0;
   data.set("/proc/stat", "btime 1000000000\n"); dirs.set("/proc", ["90", "200", "205", "210", "220"]);
@@ -64,4 +64,14 @@ describe("target-only diagnostic observer", () => {
     await attachTargetObserver({ pid: 90, hz: 100, version: "v20.1.0", kernel: k.port, armed: () => true, on: () => { throw Error("no channel"); }, off: () => {}, save: async () => {} })();
     expect(() => attachTargetObserver({ pid: 90, hz: 100, version: "v24.1.0", kernel: k.port, armed: () => true, on: () => { throw Error("no channel"); }, off: () => {}, save: async () => {} })).not.toThrow();
   });
+});
+
+it("requires the full reverse tuple including normalized loopback address families", () => {
+  const header = "sl local_address rem_address st\n", row = "0: 00000000000000000000000001000000:9C40 00000000000000000000000001000000:7979 01 0:0 0:0 0 501 0 555";
+  expect(peerInode([header + row], socket)).toBeUndefined();
+  expect(peerInode([header + row], { ...socket, localAddress: "::1", remoteAddress: "::1" })).toBe("555");
+  const mapped = row.replaceAll("00000000000000000000000001000000", "0000000000000000FFFF00000100007F");
+  expect(peerInode([header + mapped], { ...socket, localAddress: "::ffff:127.0.0.1", remoteAddress: "::ffff:127.0.0.1" })).toBe("555");
+  expect(peerInode([header + mapped], socket)).toBe("555");
+  expect(peerInode([header + mapped], { ...socket, remotePort: 40001 })).toBeUndefined();
 });

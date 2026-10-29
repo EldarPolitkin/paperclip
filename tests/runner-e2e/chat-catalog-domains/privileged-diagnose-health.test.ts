@@ -37,6 +37,8 @@ it("rejects generic prose, fixture-only observation, wrong target, missing visib
 
 it("accepts context-bound multiline operator guidance but never self-inability or another subject", () => {
   expect(supportedDiagnosticOperator(`The diagnostic target is ${targetUrl}.\nAn operator can run paperclipai doctor for that instance in a terminal.`, targetUrl)).toBe(true);
+  expect(supportedDiagnosticOperator(`From your terminal, run paperclipai doctor for ${targetUrl}.`, targetUrl)).toBe(true);
+  expect(supportedDiagnosticOperator(`I will run doctor for you on ${targetUrl}.`, targetUrl)).toBe(false);
   expect(supportedDiagnosticOperator(`I run doctor for ${targetUrl} in a terminal.`, targetUrl)).toBe(false);
   expect(supportedDiagnosticOperator(`I cannot run doctor for your ${targetUrl}.`, targetUrl)).toBe(false);
   expect(supportedDiagnosticOperator(`Target ${targetUrl}.\nAn operator can run doctor for http://other.invalid in a terminal.`, targetUrl)).toBe(false);
