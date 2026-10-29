@@ -68,6 +68,7 @@ it("unchanged exact/encoded/provider-shape scans remain fatal before any private
 });
 it("seals an admission failure before target reader or installer ever ran", async () => {
  const f = await fixture(); Object.assign(f.operation, { phase: "admission", outcome: "failed", retirement: "not-started", capturedStreams: [], provisionerSha256: null }); await f.save();
+ await rm(path.join(f.root, "steering-pi-installer.stdout.log")); await rm(path.join(f.root, "steering-pi-installer.stderr.log"));
  const scan = await sealPreframeworkOperation(f.context, []); expect(scan.files.map(r => r.path)).toEqual(["snapshots/preframework-operation.json"]);
  const { bundle } = await preparePrivateCellBundle(f.root, STEERING_PI_EXECUTION, f.context, "preframework-operation");
  const identity = JSON.parse(await readFile(path.join(bundle, "identity.json"), "utf8")); expect((await verifyDownloadedPrivateCell(bundle, STEERING_PI_EXECUTION, identity)).operation?.retirement).toBe("not-started");
@@ -99,4 +100,11 @@ it("ordinary sealed framework FAIL evidence still bundles and downloads without 
  const identity = JSON.parse(await readFile(path.join(bundle, "identity.json"), "utf8"));
  expect((await verifyDownloadedPrivateCell(bundle, STEERING_PI_EXECUTION, identity)).operation).toBeUndefined();
  expect(await readFile(path.join(bundle, "sealed-results/html-report/campaign.json"), "utf8")).toBe('{"status":"failed"}');
+});
+
+it("rejects known output omitted by an existing admission state before creating any inventory", async () => {
+ const f = await fixture(); Object.assign(f.operation, { phase: "admission", outcome: "failed", retirement: "not-started", capturedStreams: [], provisionerSha256: null }); await f.save();
+ const secret = "synthetic-known-output-root-123456"; await writeFile(path.join(f.root, "steering-pi-installer.stdout.log"), secret);
+ await expect(sealPreframeworkOperation(f.context, [secret])).rejects.toThrow();
+ await expect(readFile(path.join(f.root, "originals", manualCellKind(STEERING_PI_EXECUTION), "original-evidence-inventory.json"))).rejects.toThrow(/ENOENT/);
 });

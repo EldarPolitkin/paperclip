@@ -831,7 +831,6 @@ jobs:
           tar --extract --gzip \
             --file runner-e2e-build/runner-e2e-build-bundle.tar.gz \
             --directory "$GITHUB_WORKSPACE"
-          printf 'bundle_sha256=%s\n' "$(sha256sum runner-e2e-build/runner-e2e-build-bundle.tar.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           test -d packages/paperclip-eval-kernel/dist
           test -d packages/paperclip-runner/dist
 
@@ -1118,6 +1117,7 @@ jobs:
           tar --extract --gzip \
             --file runner-e2e-build/runner-e2e-build-bundle.tar.gz \
             --directory "$GITHUB_WORKSPACE"
+          printf 'bundle_sha256=%s\n' "$(sha256sum runner-e2e-build/runner-e2e-build-bundle.tar.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           test -d packages/paperclip-eval-kernel/dist
           if [ "$NEEDS_RUNNER_TYPESCRIPT" = true ]; then
             test -d packages/paperclip-runner/dist

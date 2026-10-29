@@ -1,4 +1,4 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { packageEvidence } from "./evidence.js";
 import { sealStandardOriginalEvidence, type ManualPrivateHandoff } from "./manual-private-handoff.js";
@@ -70,6 +70,15 @@ export async function sealPreframeworkOperation(context: ManualPrivateHandoff, s
     operation = newPreframeworkOperation(context); operation.outcome = "unknown";
     await writeFile(path.join(context.root, PRIVATE_OPERATION_STATE), `${JSON.stringify(operation)}\n`, { mode: 0o600, flag: "wx" });
   }
+  const discovered: Array<"stdout" | "stderr"> = [];
+  for (const stream of ["stdout", "stderr"] as const) {
+    const info = await lstat(path.join(context.root, `steering-pi-installer.${stream}.log`)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+    if (!info) continue;
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.mode & 0o077 || typeof process.getuid === "function" && info.uid !== process.getuid())
+      throw new Error("Invalid known installer output custody");
+    discovered.push(stream);
+  }
+  if (discovered.join() !== operation.capturedStreams.join()) throw new Error("Known installer output differs from operation capture declaration");
   const source = path.join(context.root, "preframework-operation");
   await mkdir(source, { mode: 0o700 }); await mkdir(path.join(source, "snapshots"), { mode: 0o700 });
   await writeFile(path.join(source, "snapshots/preframework-operation.json"), `${JSON.stringify(operation)}\n`, { mode: 0o600, flag: "wx" });

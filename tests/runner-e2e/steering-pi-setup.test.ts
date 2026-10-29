@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -150,4 +151,22 @@ it("the actual trusted failure sealer runs on failed or cancelled preparation, n
  expect(evaluate("failure", "success")).toBe(true); expect(evaluate("cancelled", "success")).toBe(true);
  for (const outcome of ["success", "skipped", ""]) expect(evaluate(outcome, "success")).toBe(false);
  expect(evaluate("failure", "failure")).toBe(false);
+});
+
+it("the actual selected restore producer writes the bundle hash bound to Pi setup", async () => {
+ const jobs = YAML.parse(await readFile(new URL("../../.github/workflows/runner-full-stack-e2e.yml", import.meta.url), "utf8")).jobs;
+ const steps = jobs.test_manual_private.steps;
+ const consumer = steps.find((row: any) => row.id === "steering_pi_setup");
+ const binding = /^\$\{\{ steps\.([a-z0-9_]+)\.outputs\.([a-z0-9_]+) \}\}$/.exec(consumer.env.STEERING_PI_BUILD_SHA256);
+ expect(binding).not.toBeNull(); const producer = steps.find((row: any) => row.id === binding![1]); expect(producer).toBeDefined();
+ const root = await mkdtemp(path.join(await realpath(os.tmpdir()), "pi-restore-output-")), output = path.join(root, "github-output");
+ try {
+  await mkdir(path.join(root, "runner-e2e-build")); await mkdir(path.join(root, "packages/paperclip-eval-kernel/dist"), { recursive: true }); await writeFile(output, "");
+  const hash = "b".repeat(64);
+  const result = spawnSync("bash", ["-c", `sha256sum(){ if [ "$1" = --check ]; then return 0; fi; printf '%s  %s\\n' '${hash}' "$1"; }; tar(){ return 0; };\n${producer.run}`], {
+   cwd: root, encoding: "utf8", env: { PATH: process.env.PATH, GITHUB_WORKSPACE: root, GITHUB_OUTPUT: output, NEEDS_RUNNER_TYPESCRIPT: "false", NEEDS_NATIVE_BINARY: "false" } });
+  expect(result.status, result.stderr).toBe(0);
+  const values = Object.fromEntries((await readFile(output, "utf8")).trim().split("\n").filter(Boolean).map(line => line.split("=")));
+  expect(values[binding![2]!]).toBe(hash);
+ } finally { await rm(root, { recursive: true, force: true }); }
 });
