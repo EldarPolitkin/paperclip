@@ -31,7 +31,7 @@ pub(crate) fn acpx_release_profile(agent: &str) -> Option<AcpxReleaseProfile> {
             agent_runtime_package: Some("native:grok"),
             agent_runtime_version: Some("1.0.13"),
             command_digest:
-                "sha256:78e3a9c6a1cd91e31c56ecf0b60d9f715ad48e651d249695d23113a92bf896d5",
+                "sha256:6d645a201f5bfc8848941dc87174e56ab2f93ae4be82c9f61d8de57841ceffd4",
             requires_provider_policy: false,
             qualification_pending: false,
         },
@@ -61,7 +61,7 @@ pub(crate) fn acpx_release_profile(agent: &str) -> Option<AcpxReleaseProfile> {
             agent_runtime_package: None,
             agent_runtime_version: None,
             command_digest:
-                "sha256:b07207bab5b39966845713c2c80bb4bd34ed03571c343019caadfc53d3263c4e",
+                "sha256:371df8277f8736fd52592aabf49e419b2443485a024acfaafc008f29ba6d1982",
             requires_provider_policy: true,
             qualification_pending: false,
         },
