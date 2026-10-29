@@ -21,7 +21,7 @@ function LocationProbe() {
   const navigate = useNavigate();
   return <><output>{location.pathname}{location.search}{location.hash}</output><button onClick={() => navigate(-1)}>Back</button></>;
 }
-async function render(hash = "", markdown = body, revisionId?: string, documentIssueId?: string) {
+async function render(hash = "", markdown = body, revisionId?: string, documentIssueId?: string, currentIssueId?: string) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -29,7 +29,7 @@ async function render(hash = "", markdown = body, revisionId?: string, documentI
   await act(async () => {
     root.render(<MemoryRouter initialEntries={[`/PAP/issues/example?keep=1${hash}`]}>
       <QueryClientProvider client={client}><ThemeProvider>
-        <DocumentMarkdownBody documentKey="report" revisionId={revisionId} documentIssueId={documentIssueId}>{markdown}</DocumentMarkdownBody>
+        <DocumentMarkdownBody documentKey="report" revisionId={revisionId} documentIssueId={documentIssueId} currentIssueId={currentIssueId}>{markdown}</DocumentMarkdownBody>
         <LocationProbe />
       </ThemeProvider></QueryClientProvider>
     </MemoryRouter>);
@@ -86,6 +86,30 @@ describe("document image gallery", () => {
     expect(container.querySelector("output")?.textContent).toContain("#document-report&revision=old&documentIssue=owner&image=1");
     await key("ArrowRight");
     expect(container.querySelector("output")?.textContent).toContain("documentIssue=owner&image=2");
+  });
+
+  it("opens an explicit current-task link and keeps review parameters through navigation and reopening", async () => {
+    await render("#document-report&revision=old&interaction=review&viewer=full&documentIssue=current-task&image=2", body, "old", undefined, "current-task");
+    expect(dialog()?.textContent).toContain("2 / 3");
+    await key("ArrowRight");
+    expect(dialog()?.textContent).toContain("3 / 3");
+    await click('button[title="Close"]');
+    expect(dialog()).toBeNull();
+    await click('[aria-label="Open image: First"]');
+    expect(dialog()?.textContent).toContain("1 / 3");
+    const url = container.querySelector("output")?.textContent;
+    expect(url).toContain("revision=old");
+    expect(url).toContain("interaction=review");
+    expect(url).toContain("viewer=full");
+    expect(url).toContain("documentIssue=current-task");
+  });
+
+  it("does not match another task's saved tab to an implicit current-task link", async () => {
+    await render("#document-report&revision=old&image=2", body, "old", "other-task", "current-task");
+    expect(dialog()).toBeNull();
+    await click('[aria-label="Open image: First"]');
+    expect(dialog()?.textContent).toContain("1 / 3");
+    expect(container.querySelector("output")?.textContent).toContain("documentIssue=other-task");
   });
 
   it.each(["#document-other&image=1", "#document-report&image=100", "#document-report&image=0", "#document-report&revision=old&image=1"])("does not open an unavailable image target: %s", async (hash) => {

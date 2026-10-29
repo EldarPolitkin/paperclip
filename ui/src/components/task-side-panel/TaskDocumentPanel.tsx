@@ -17,12 +17,14 @@ export function TaskDocumentPanel({
   initialDocument,
   revisionId,
   documentIssueId,
+  currentIssueId = issueId,
 }: {
   issueId: string;
   documentKey: string;
   initialDocument?: IssueDocument;
   revisionId?: string;
   documentIssueId?: string;
+  currentIssueId?: string;
 }) {
   const location = useLocation();
   const [annotationPanelOpen, setAnnotationPanelOpen] = useState(false);
@@ -105,7 +107,7 @@ export function TaskDocumentPanel({
           panelPlacement="popover"
         >
           <DocumentMarkdownBody documentKey={document.key} revisionId={revisionId}
-            documentIssueId={documentIssueId}>
+            documentIssueId={documentIssueId} currentIssueId={currentIssueId}>
             {document.body}
           </DocumentMarkdownBody>
         </IssueDocumentAnnotations>

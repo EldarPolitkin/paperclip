@@ -8,9 +8,10 @@ type DocumentMarkdownBodyProps = Omit<ComponentProps<typeof MarkdownBody>, "onIm
   documentKey: string;
   revisionId?: string;
   documentIssueId?: string;
+  currentIssueId?: string;
 };
 
-export function DocumentMarkdownBody({ documentKey, revisionId, documentIssueId, ...props }: DocumentMarkdownBodyProps) {
+export function DocumentMarkdownBody({ documentKey, revisionId, documentIssueId, currentIssueId, ...props }: DocumentMarkdownBodyProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const locationRef = useRef(location);
@@ -21,7 +22,7 @@ export function DocumentMarkdownBody({ documentKey, revisionId, documentIssueId,
   const target = parseDocumentAnnotationHash(location.hash);
   const matchesDocument = target?.documentKey === documentKey
     && target.revisionId === revisionId
-    && target.documentIssueId === documentIssueId;
+    && (target.documentIssueId ?? currentIssueId) === (documentIssueId ?? currentIssueId);
   const image = matchesDocument ? target.image : undefined;
 
   const readImages = useCallback(() =>
@@ -45,15 +46,16 @@ export function DocumentMarkdownBody({ documentKey, revisionId, documentIssueId,
     const location = locationRef.current;
     const current = parseDocumentAnnotationHash(location.hash);
     const sameDocument = current?.documentKey === documentKey
-      && current.revisionId === revisionId && current.documentIssueId === documentIssueId;
+      && current.revisionId === revisionId
+      && (current.documentIssueId ?? currentIssueId) === (documentIssueId ?? currentIssueId);
     const hash = buildDocumentAnnotationHash({
       ...(sameDocument ? current : { documentKey, threadId: null, commentId: null }),
       revisionId,
-      documentIssueId,
+      documentIssueId: sameDocument ? current.documentIssueId : documentIssueId,
       image: index === undefined ? undefined : index + 1,
     });
     navigate({ pathname: location.pathname, search: location.search, hash }, { replace: true, state: location.state });
-  }, [documentIssueId, documentKey, navigate, revisionId]);
+  }, [currentIssueId, documentIssueId, documentKey, navigate, revisionId]);
 
   const openImage = useCallback((_src: string, element: HTMLImageElement) => {
     const index = readImages().indexOf(element);

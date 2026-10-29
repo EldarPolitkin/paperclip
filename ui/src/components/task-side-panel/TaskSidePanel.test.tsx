@@ -106,7 +106,7 @@ vi.mock("@/components/WorkspaceFileBrowser", () => ({
 vi.mock("./TaskAttachmentPanel", () => ({ TaskAttachmentPanel: ({ attachmentId }: { attachmentId: string }) => <div>Text file {attachmentId}</div> }));
 
 vi.mock("./TaskDocumentPanel", () => ({
-  TaskDocumentPanel: ({ documentKey, issueId, revisionId, documentIssueId, initialDocument }: { documentKey: string; issueId: string; revisionId?: string; documentIssueId?: string; initialDocument?: IssueDocument }) => <div data-document-owner={issueId} data-gallery-owner={documentIssueId} data-revision-id={revisionId} data-initial-document={initialDocument?.id}>{`Document ${documentKey}`}</div>,
+  TaskDocumentPanel: ({ documentKey, issueId, revisionId, documentIssueId, currentIssueId, initialDocument }: { documentKey: string; issueId: string; revisionId?: string; documentIssueId?: string; currentIssueId?: string; initialDocument?: IssueDocument }) => <div data-document-owner={issueId} data-gallery-owner={documentIssueId} data-current-task={currentIssueId} data-revision-id={revisionId} data-initial-document={initialDocument?.id}>{`Document ${documentKey}`}</div>,
 }));
 
 vi.mock("./TaskWorkspaceFilePanel", () => ({
@@ -296,6 +296,7 @@ describe("TaskSidePanel", () => {
     const document = container.querySelector("[data-document-owner]");
     expect(document?.getAttribute("data-document-owner")).toBe("task-b");
     expect(document?.getAttribute("data-gallery-owner")).toBe("task-b");
+    expect(document?.getAttribute("data-current-task")).toBe("task-1");
     expect(document?.getAttribute("data-revision-id")).toBe("b-v1");
     expect(document?.hasAttribute("data-initial-document")).toBe(false);
     expect(container.textContent).not.toContain("Origin task document must not leak");

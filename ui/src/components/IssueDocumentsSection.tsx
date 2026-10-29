@@ -113,7 +113,7 @@ function renderFoldableBody(
   body: string,
   className?: string,
   externalReferences?: MarkdownExternalReferenceMap,
-  galleryTarget?: { documentKey: string; revisionId?: string },
+  galleryTarget?: { documentKey: string; revisionId?: string; currentIssueId?: string },
 ) {
   return (
     <FoldCurtain>
@@ -1426,7 +1426,7 @@ function AccountIssueDocumentsSection({
                       // Loading and error copy must never become editor input
                       // or annotation content. A blocked draft stays editable.
                       const renderedDocumentBody = waitingForLinkedRevision && !activeDraft ? null : isHistoricalPreview ? (
-                        renderFoldableBody(displayedBody, documentBodyContentClassName, externalReferences, { documentKey: doc.key, revisionId: galleryRevisionId })
+                        renderFoldableBody(displayedBody, documentBodyContentClassName, externalReferences, { documentKey: doc.key, revisionId: galleryRevisionId, currentIssueId: issue?.id })
                       ) : activeDraft ? (
                         <MarkdownEditor
                           value={displayedBody}
@@ -1448,7 +1448,7 @@ function AccountIssueDocumentsSection({
                           onSubmit={() => void commitDraft(activeDraft ?? draft, { clearAfterSave: false, trackAutosave: true })}
                         />
                       ) : (
-                        renderFoldableBody(displayedBody, documentBodyContentClassName, externalReferences, { documentKey: doc.key, revisionId: galleryRevisionId })
+                        renderFoldableBody(displayedBody, documentBodyContentClassName, externalReferences, { documentKey: doc.key, revisionId: galleryRevisionId, currentIssueId: issue?.id })
                       );
 
                       return documentSubject.annotations && (!waitingForLinkedRevision || activeDraft) ? (

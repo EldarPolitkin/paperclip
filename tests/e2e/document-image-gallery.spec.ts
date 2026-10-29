@@ -92,13 +92,23 @@ for (const mode of ["desktop", "mobile", "classic"] as const) {
         data: { title: "Design review", body: "# New revision\n\nNo images.", format: "markdown", baseRevisionId: saved.latestRevisionId },
       }));
       expect(revised.latestRevisionId).not.toBe(saved.latestRevisionId);
-      await page.goto(`${taskPath}#document-design&viewer=full&revision=${saved.latestRevisionId}&image=3`);
+      await page.goto(`${taskPath}#document-design&viewer=full&revision=${saved.latestRevisionId}&interaction=current-task-review&documentIssue=${issue.id}&image=3`);
       await expect(gallery).toContainText("3 / 3");
       await expect(gallery.getByRole("img")).toHaveAttribute("src", paths[2]!);
       await page.screenshot({ path: testInfo.outputPath("document-gallery-revision.png"), fullPage: true });
       await gallery.click({ position: { x: 5, y: 180 } });
       await expect(gallery).toBeHidden();
       await expect(page).toHaveURL(new RegExp(`revision=${saved.latestRevisionId}`));
+      await first.click();
+      await expect(gallery).toContainText("1 / 3");
+      await page.keyboard.press("ArrowRight");
+      await expect(gallery).toContainText("2 / 3");
+      await expect(page).toHaveURL(/interaction=current-task-review/);
+      await expect(page).toHaveURL(/viewer=full/);
+      await expect(page).toHaveURL(new RegExp(`documentIssue=${issue.id}`));
+      await page.reload();
+      await expect(gallery).toContainText("2 / 3");
+      await gallery.getByRole("button", { name: "Close", exact: true }).click();
       if (mode === "classic") {
         await page.getByRole("button", { name: "Return to latest", exact: true }).click();
         await expect(page.getByRole("heading", { name: "New revision", exact: true })).toBeVisible();
