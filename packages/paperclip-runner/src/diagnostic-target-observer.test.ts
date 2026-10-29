@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, type KernelPort, type PeerObservation } from "../../../tests/runner-e2e/chat-catalog-domains/diagnostic-target-observer.js";
+import { attachTargetObserver, healthRequest, observeSocket, peerInode, nativeHealthResponse, type KernelPort, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 function kernel() {
   const data = new Map<string, string>(), dirs = new Map<string, string[]>(), links = new Map<string, string>(); let now = 0;
   data.set("/proc/stat", "btime 1000000000\n"); dirs.set("/proc", ["90", "200", "205", "210", "220"]);

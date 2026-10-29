@@ -5,7 +5,7 @@ import { readFile, readlink, mkdtemp, writeFile, rm, lstat } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { nativeHealthResponse, processScalar, type ProcessScalar, type PeerObservation } from "../../../tests/runner-e2e/chat-catalog-domains/diagnostic-target-observer.js";
+import { nativeHealthResponse, processScalar, type ProcessScalar, type PeerObservation } from "../scripts/diagnostic-observer/diagnostic-target-observer.js";
 
 /** Existing PR Runner Vitest source plus observed public-pr-x64 job metadata.
  * These context signals are not independent AWS qualification: the final CI
@@ -189,8 +189,8 @@ const ownedFixtures: Fixture[] = [];
 async function fixture(): Promise<Fixture> {
   requireRemote(); const ticks = await hz(), root = await mkdtemp(path.join(tmpdir(), "observer-linux-ci-"));
   privateRoots.add(root);
-  const observer = new URL("../../../tests/runner-e2e/chat-catalog-domains/diagnostic-target-observer.ts", import.meta.url);
-  const preload = fileURLToPath(new URL("../../../tests/runner-e2e/chat-catalog-domains/diagnostic-target-preload.mjs", import.meta.url));
+  const observer = new URL("../scripts/diagnostic-observer/diagnostic-target-observer.ts", import.meta.url);
+  const preload = fileURLToPath(new URL("../scripts/diagnostic-observer/diagnostic-target-preload.mjs", import.meta.url));
   const output = path.join(root, "observations.json"), armed = path.join(root, "armed"), config = path.join(root, "config.json");
   await writeFile(armed, "armed", { mode: 0o600 }); await writeFile(config, JSON.stringify({ output, armed, hz: ticks }), { mode: 0o600 });
   const serverFile = path.join(root, "server.mjs"), providerFile = path.join(root, "provider.mjs"), clientFile = path.join(root, "client.mjs");
