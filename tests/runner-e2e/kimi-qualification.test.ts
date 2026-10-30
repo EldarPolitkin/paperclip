@@ -41,15 +41,19 @@ describe("Kimi Code explicit Product qualification", () => {
     }
   });
 
-  it("issues an exact isolated candidate grant only for its own manual suite", () => {
+  it("requires its own manual suite without inheriting candidate authority", () => {
     const cell = cells[0]!;
-    const env = buildRunnerE2EProcessEnvironment({ PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" }, [cell]);
-    expect(JSON.parse(env.PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent: "kimi", model: "kimi-for-coding" }]);
+    const ambient = { PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient", PAPERCLIP_ACPX_CANDIDATE_ADMISSION: "ambient" };
+    const env = buildRunnerE2EProcessEnvironment(ambient, [cell]);
+    expect(env.PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
+    expect(env.PAPERCLIP_ACPX_CANDIDATE_ADMISSION).toBeUndefined();
     for (const suite of [{ ...cell.suite, manualOnly: false }, { ...cell.suite, id: "extended-harnesses" }, { ...cell.suite, id: "unrelated-manual-suite" }]) {
       expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, suite }])).toThrow("explicit provider qualification suite");
     }
     expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, profile: { ...cell.profile, id: "unrelated-profile" } }])).toThrow("explicit provider qualification suite");
-    expect(buildRunnerE2EProcessEnvironment({ PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" }, []).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
+    const empty = buildRunnerE2EProcessEnvironment(ambient, []);
+    expect(empty.PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
+    expect(empty.PAPERCLIP_ACPX_CANDIDATE_ADMISSION).toBeUndefined();
   });
 
   it("removes ambient Kimi secrets and login-home aliases before starting the product server", () => {
