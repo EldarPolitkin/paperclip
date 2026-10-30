@@ -15,6 +15,7 @@ import { readConnectionFailure, type ConnectionFailure } from "@paperclipai/adap
 import { isAiConnectionConfigurationReason } from "./ai-connection-configuration-failure.js";
 import { readRunFailureReportingMode, type RunFailureReportingMode } from "../sentry-run-failure-policy.js";
 import { RESTRICTED_WORKSPACE_SOURCE_REASON } from "./workspace-source-restriction.js";
+import { NATIVE_PROVIDER_OVERLOADED_CODE, NATIVE_PROVIDER_OVERLOADED_DIAGNOSTIC } from "./native-runtime/native-provider-failure.js";
 
 type HeartbeatRun = typeof heartbeatRuns.$inferSelect;
 
@@ -236,6 +237,27 @@ function isCodexAcpModelCapacityFailure(run: HeartbeatRun, options: RunFailureRe
     options.phase !== "setup" && run.signal == null;
 }
 
+/**
+ * A committed Codex `serverOverloaded` terminal chose the bounded capacity
+ * retry, and the same status transaction created that retry run. The retry
+ * owns recovery; a later failure reports itself. Held and exhausted capacity
+ * failures have no automatic retry and stay reportable.
+ */
+async function isScheduledNativeCapacityRetry(db: Db, run: HeartbeatRun, options: RunFailureReportOptions): Promise<boolean> {
+  const result = asRecord(run.resultJson);
+  const diagnostic = asRecord(result?.nativeProviderFailure);
+  if (run.status !== "failed" || run.runtimeMode !== "native" || run.errorCode !== NATIVE_PROVIDER_OVERLOADED_CODE ||
+      options.phase === "setup" || run.signal != null || result?.finalizationPhase !== "committed" ||
+      result.finalizationReasonCode !== NATIVE_PROVIDER_OVERLOADED_CODE ||
+      diagnostic?.provider !== NATIVE_PROVIDER_OVERLOADED_DIAGNOSTIC.provider ||
+      diagnostic.category !== NATIVE_PROVIDER_OVERLOADED_DIAGNOSTIC.category) return false;
+  const [retry] = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+    eq(heartbeatRuns.companyId, run.companyId), eq(heartbeatRuns.agentId, run.agentId),
+    eq(heartbeatRuns.retryOfRunId, run.id), eq(heartbeatRuns.scheduledRetryReason, NATIVE_PROVIDER_OVERLOADED_CODE),
+  )).limit(1);
+  return retry !== undefined;
+}
+
 const providerAuthErrorCodes = new Set(["claude_auth_required", "acpx_auth_required"]);
 
 /**
@@ -336,6 +358,11 @@ async function captureTerminalRunFailure(
         return false;
       });
       if (rejectedExternally) return;
+      const capacityRetry = await isScheduledNativeCapacityRetry(db, run, options).catch((err) => {
+        logger.warn({ err, runId: run.id }, "failed to read native capacity retry for run failure report");
+        return false;
+      });
+      if (capacityRetry) return;
     }
 
     const taskId = readTaskId(run);
