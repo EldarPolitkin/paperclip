@@ -66,6 +66,7 @@ export const teamConfigureExternalCases = [definition("teams.configure-team", as
     await ctx.input.api.patchSensitive(`/api/agents/${missingId}`, { adapterConfig: { ...override.adapterConfig, env: { ...(override.adapterConfig?.env as Record<string, unknown> ?? {}), ...missingTeamAccountEnvironment(subscription, emptyHome) } } });
     const members = catalogTeamMembers(await observeTeamResources(ctx), team.id);
     const initialProbes = await Promise.all(members.map(member => probe(ctx, member)));
+    await ctx.input.evidence("chat-catalog-team-initial-probes.json", { initialProbes });
     if (!initialProbes.some(row => row.agentId === missingId && row.status === "fail" && row.checks.some(check => check.level === "error" && /auth|credential|login/i.test(check.code))) || !initialProbes.some(row => row.agentId === workingId && row.status === "pass")) throw new Error("Setup blocker: actual per-member runtime probes do not establish the required missing-versus-ready account split");
     const working = await ctx.input.api.get<Agent>(`/api/agents/${workingId}`);
     const workingRevisionIdsBefore = (await ctx.input.api.get<Array<{ id: string }>>(`/api/agents/${workingId}/config-revisions`)).map(row => row.id).sort();
