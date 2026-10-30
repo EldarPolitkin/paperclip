@@ -114,8 +114,13 @@ function* socketObservation(now: () => number, socket: SocketScalar, targetPid: 
     if (owners.length !== 1) { outcome = owners.length > 1 ? "AMBIGUOUS_OWNER" : "OWNER_MISSING"; return; }
     const chain = [owners[0]!];
     while (chain.at(-1)!.parent > 1 && chain.length < 64) {
-      const parent = yield* identity(chain.at(-1)!.parent, "ANCESTRY");
-      if (parent.uid !== target.uid || parent.namespace !== target.namespace) break;
+      const pid = chain.at(-1)!.parent; mark("ANCESTRY_STATUS", pid);
+      const status = yield* read(`/proc/${pid}/status`), uid = /^Uid:\s+(\d+)(?:\s|$)/m.exec(status)?.[1];
+      if (!uid) return;
+      if (Number(uid) !== target.uid) break;
+      const parent = yield* identity(pid, "ANCESTRY");
+      if (parent.uid !== target.uid) { outcome = "GENERATION_CHANGED"; failure(); return; }
+      if (parent.namespace !== target.namespace) break;
       if (chain.some(p => p.pid === parent.pid)) { outcome = "GENERATION_CHANGED"; failure(); return; }
       chain.push(parent);
     }

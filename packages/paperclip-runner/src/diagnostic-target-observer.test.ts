@@ -221,3 +221,48 @@ describe("retained FD-directory iterator lifecycle", () => {
     expect(observeSocketSync(gone.sync, socket, 90, 100, d => missing.push(d))).toBeUndefined(); expect(missing[0]).toMatchObject({ failureStage: "OWNER_STATUS", errno: "ENOENT", subject: "OTHER" });
   });
 });
+
+
+describe("ancestor UID trust boundary", () => {
+  function ancestor(uid: string) {
+    const k = kernel();
+    k.data.set("/proc/200/stat", k.data.get("/proc/200/stat")!.replace(" S 1 ", " S 999 "));
+    k.data.set("/proc/999/stat", k.data.get("/proc/200/stat")!.replace(/^200 /, "999 ").replace(" S 999 ", " S 1 "));
+    k.data.set("/proc/999/status", uid);
+    return k;
+  }
+  it.each(["sync", "async"])("%s stops at a known foreign UID before namespace access", async mode => {
+    const k = ancestor("Uid: 0 0 0 0\n"), namespaceReads: string[] = [], reports: SocketDiagnostic[] = [];
+    const link = k.sync.link;
+    k.sync.link = name => { namespaceReads.push(name); if (name === "/proc/999/ns/net") throw Object.assign(Error("WITHHELD"), { code: "EACCES" }); return link(name); };
+    k.port.link = async name => k.sync.link(name);
+    const p = mode === "sync" ? observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d)) : await observeSocket(k.port, socket, 90, 100, d => reports.push(d));
+    expect(p).toBeDefined(); expect(namespaceReads).not.toContain("/proc/999/ns/net"); expect(k.reads).not.toContain("/proc/999/stat");
+    expect(p!.chain.map(v => v.pid)).toEqual([220, 210, 205, 200]); expect(reports[0]!.outcome).toBe("OWNERSHIP_PROVEN");
+    const response = { ...p!, finished: true, status: 503, unknown: false }, target = { pid: 90, born: born(90) };
+    expect(nativeHealthResponse(response, binding, target)).toBe(true);
+    expect(nativeHealthResponse(response, { ...binding, runnerPid: 999, runnerBorn: born(999) }, target)).toBe(false);
+    expect(nativeHealthResponse(response, { ...binding, providerPid: 999, providerBorn: born(999) }, target)).toBe(false);
+  });
+  it.each(["sync", "async"])("%s keeps a same-UID denied ancestor namespace unknown", async mode => {
+    const k = ancestor("Uid: 501 501 501 501\n"), link = k.sync.link, reports: SocketDiagnostic[] = [];
+    k.sync.link = name => { if (name === "/proc/999/ns/net") throw Object.assign(Error("WITHHELD"), { code: "EACCES" }); return link(name); };
+    k.port.link = async name => k.sync.link(name);
+    const p = mode === "sync" ? observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d)) : await observeSocket(k.port, socket, 90, 100, d => reports.push(d));
+    expect(p).toBeUndefined(); expect(reports[0]).toMatchObject({ outcome: "PROC_DENIED", failureStage: "ANCESTRY_NAMESPACE", errno: "EACCES" });
+  });
+  it("keeps a changed same-UID ancestor identity unknown", () => {
+    const k = ancestor("Uid: 501 501 501 501\n"), read = k.sync.read, reports: SocketDiagnostic[] = []; let count = 0;
+    k.sync.read = name => name === "/proc/999/status" && ++count > 1 ? "Uid: 0 0 0 0\n" : read(name);
+    k.links.set("/proc/999/ns/net", "net:[123]");
+    expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined();
+    expect(reports[0]!.outcome).toBe("GENERATION_CHANGED");
+  });
+  it.each(["malformed", "missing", "denied", "disappeared"])("keeps %s ancestor UID unknown without reading its namespace", kind => {
+    const k = ancestor(kind === "malformed" ? "Uid: invalid\n" : "Name: worker\n"), read = k.sync.read, link = k.sync.link, namespaceReads: string[] = [], reports: SocketDiagnostic[] = [];
+    if (kind === "denied" || kind === "disappeared") k.sync.read = name => { if (name === "/proc/999/status") throw Object.assign(Error("WITHHELD"), { code: kind === "denied" ? "EACCES" : "ENOENT" }); return read(name); };
+    k.sync.link = name => { namespaceReads.push(name); return link(name); };
+    expect(observeSocketSync(k.sync, socket, 90, 100, d => reports.push(d))).toBeUndefined();
+    expect(namespaceReads).not.toContain("/proc/999/ns/net"); expect(reports[0]!.failureStage).toBe("ANCESTRY_STATUS"); expect(reports[0]!.outcome).not.toBe("OWNERSHIP_PROVEN");
+  });
+});
