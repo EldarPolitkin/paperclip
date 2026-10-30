@@ -87,9 +87,9 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(85);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(86);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:267e04ce9335f7641f665d9b952bc4637056ee1cfeac23715b7aefbc3a8df3c9");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:8d0eb9ed39fe7faabc7c2943738177e96a9a8c80a116ef76d9c1995faa8bf328");
   });
 
 it("preserves published v65 while binding retained-maintenance waits in v66", async () => {
@@ -662,6 +662,17 @@ it("preserves the historical sleep-maintenance v64 identity", async () => {
     ]);
     expect(isSupportedAcpxProfileVersion("copilot", 23)).toBe(true);
     expect(current.commandDigest).not.toBe(prior.commandDigest);
+  });
+
+  it("preserves v85 while binding runtime activity delivery in v86", () => {
+    const priorBytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v85-identity.json", import.meta.url));
+    expect(createHash("sha256").update(priorBytes).digest("hex")).toBe("15d2790d94d7cc46ac728119ed9b4d07ed2b682be039b3debc716600708d8c1a");
+    const prior = JSON.parse(priorBytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "nativeSessionRuntimeSourceSha256", "profileCompatibilitySourceSha256", "runtimeRequestBridgeSourceSha256", "runtimeRequestFacadeSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 85)).toBe(true);
   });
 
   it("admits the current declaration and binds its source policy, receipts and patch hashes", () => {
