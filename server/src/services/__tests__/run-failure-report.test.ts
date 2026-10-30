@@ -448,15 +448,16 @@ describeEmbeddedPostgres("reportRunFailure", () => {
       },
       ...input.run,
     });
-    await db.insert(heartbeatRuns).values(run);
+    const [stored] = await db.insert(heartbeatRuns).values(run).returning();
     if (input.retry !== null) {
       await db.insert(heartbeatRuns).values({
         companyId, agentId, invocationSource: "automation", triggerDetail: "system", status: "scheduled_retry",
         retryOfRunId: run.id, scheduledRetryReason: "native_provider_overloaded", scheduledRetryAttempt: 1,
-        scheduledRetryAt: new Date(Date.now() + 60_000), errorCode: "native_provider_overloaded", ...input.retry,
+        scheduledRetryAt: new Date(Date.now() + 60_000), errorCode: "native_provider_overloaded",
+        contextSnapshot: { issueId: run.nativeIssueId, retryOfRunId: run.id }, ...input.retry,
       });
     }
-    return run;
+    return stored!;
   }
 
   it("keeps a native model capacity failure local once its automatic retry is scheduled", async () => {
@@ -471,6 +472,8 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     ["the task holds the retry", { resultJson: { finalizationReasonCode: "native_provider_overloaded_held" }, retry: null }],
     ["no retry run exists", { retry: null }],
     ["the successor belongs to another retry lane", { retry: { scheduledRetryReason: "native_safe_replacement" } }],
+    ["the successor belongs to another task", { retry: { contextSnapshot: { issueId: randomUUID() } } }],
+    ["the run has no native task", { run: { nativeIssueId: null } }],
     ["finalization is not committed", { resultJson: { finalizationPhase: "retryable_failure" } }],
     ["the diagnostic is not typed capacity evidence", { resultJson: { nativeProviderFailure: { provider: "codex", category: "turn_failed" } } }],
     ["the diagnostic is missing", { resultJson: { nativeProviderFailure: undefined } }],

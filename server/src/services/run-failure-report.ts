@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { agents, dotRunnerAssignments, grokBotDispatches, heartbeatRuns, nativeRunFinalizations, type Db } from "@paperclipai/db";
 import { captureRunFailure, type RunFailureStatus } from "../sentry.js";
 import {
@@ -241,18 +241,23 @@ function isCodexAcpModelCapacityFailure(run: HeartbeatRun, options: RunFailureRe
  * A committed Codex `serverOverloaded` terminal chose the bounded capacity
  * retry, and the same status transaction created that retry run. The retry
  * owns recovery; a later failure reports itself. Held and exhausted capacity
- * failures have no automatic retry and stay reportable.
+ * failures have no automatic retry and stay reportable. The retry carries the
+ * task in its context, so the company/context-issue index bounds the read to
+ * that task's runs created since this one.
  */
 async function isScheduledNativeCapacityRetry(db: Db, run: HeartbeatRun, options: RunFailureReportOptions): Promise<boolean> {
   const result = asRecord(run.resultJson);
   const diagnostic = asRecord(result?.nativeProviderFailure);
   if (run.status !== "failed" || run.runtimeMode !== "native" || run.errorCode !== NATIVE_PROVIDER_OVERLOADED_CODE ||
+      run.nativeIssueId == null ||
       options.phase === "setup" || run.signal != null || result?.finalizationPhase !== "committed" ||
       result.finalizationReasonCode !== NATIVE_PROVIDER_OVERLOADED_CODE ||
       diagnostic?.provider !== NATIVE_PROVIDER_OVERLOADED_DIAGNOSTIC.provider ||
       diagnostic.category !== NATIVE_PROVIDER_OVERLOADED_DIAGNOSTIC.category) return false;
   const [retry] = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
-    eq(heartbeatRuns.companyId, run.companyId), eq(heartbeatRuns.agentId, run.agentId),
+    eq(heartbeatRuns.companyId, run.companyId),
+    sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${run.nativeIssueId}`, gte(heartbeatRuns.createdAt, run.createdAt),
+    eq(heartbeatRuns.agentId, run.agentId),
     eq(heartbeatRuns.retryOfRunId, run.id), eq(heartbeatRuns.scheduledRetryReason, NATIVE_PROVIDER_OVERLOADED_CODE),
   )).limit(1);
   return retry !== undefined;
