@@ -59,19 +59,23 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Exact model and instructions | local and Daytona | Pending11 pinned native create/load/model/instruction controls passed on both platforms; the current authenticated product matrix remains incomplete | partial |
 | Scoped tools and credentials | local and Daytona | Native v6 credential fences passed; the first pending11 Daytona task received its exact full scoped context result and reached the intended unanswered Write | partial |
 | Ordinary setup | installed local and isolated hosted test | Ordinary connect/save/reopen/Test/run/reconnect and assigned-skill behavior remain required | unattempted |
-| Useful task | local and Daytona | Pending11 local file editing and all local journeys passed; Daytona file editing remains | partial |
-| Human input and Stop | local and Daytona | All pending11 local human-input and Stop journeys passed; Daytona Write Stop passed and remote semantic lifecycle cells remain | partial |
-| Continuation and child loss | local and Daytona | All pending11 local continuation journeys and authenticated Daytona native worker loss passed; seven remote journeys remain | partial |
+| Useful task | local and Daytona | Pending11 local and Daytona file editing passed; ordinary installed and hosted downloads remain | partial |
+| Human input and Stop | local and Daytona | All pending11 local human-input and Stop journeys passed; Daytona question, Plan and Write Stop passed; remote Stop/new/resume remains | partial |
+| Continuation and child loss | local and Daytona | All pending11 local continuation journeys and authenticated Daytona native worker loss passed; remote Stop/new/resume remains | partial |
 | Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
 | Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the recovery guard passed 65 module tests and selected assembled controls; selector regressions and targeted typechecks passed; final full checks remain | partial |
 
 Current pending11 totals remain 0 fully passed, 7 partial, 1 unattempted of 8
-gates. The two-environment matrix has thirteen distinct passing case records:
-all ten local journeys, plus Daytona native Write Stop, native worker loss, and
-ordinary messaging. Four original cases retain Core/source `0ca0d6b87d6d69b8a900621fb834ed74cb1ae446`
-and suite V4. Nine later cases retain source `d721f2f9052e19370985e53a7493e8792e319313`
-and suite V5. None is relabelled as a later source or suite. Original material
-failures remain failed.
+gates. The two-environment matrix has nineteen distinct passing case records:
+all ten local journeys and nine Daytona journeys. Daytona Stop/new/resume remains
+required. Four original cases retain Core/source
+`0ca0d6b87d6d69b8a900621fb834ed74cb1ae446` and suite V4. Nine later cases retain
+source `d721f2f9052e19370985e53a7493e8792e319313` and suite V5. Six Daytona
+cases retain source `e972a46e5aedfcb48d7cb61328e81fb70ce7dccb` and suite V5.
+A fresh local Plan workflow at that last revision is representative handoff
+evidence and adds no distinct case. Each record retains its original expected
+terminal state; conversation continuity can finish in review. None is relabelled
+as a later source or suite. Original material failures remain failed.
 
 The final local Stop/new/resume result and cleanup passed. Its original strict
 audit rejected the server-only `/new` record because that row retains the default
@@ -123,11 +127,36 @@ are distinct roles. Native Mac binaries and the immutable Linux image retain
 actual build source `3a2dc2d78df0da51ef56dd6d898a2993496d3567`; neither is
 relabelled or rebuilt for a Core-only ownership repair.
 
-Next, verify the reviewed repair with one real Daytona plan revision and one
-local plan handoff, including original results, exact provider/control evidence
-and physical cleanup. Then complete the other six remote cases. Retain unaffected
-case evidence only under an explicit source-impact record. Qualification promotion
-remains held until twenty distinct cases and campaign cleanup are verified.
+The shared directory repair passed a fresh local and Daytona Plan workflow,
+including three native turns, the exact human revision decisions and resource
+cleanup. Five subsequent Daytona cases passed: ordinary and structured questions,
+structured-question restart, file editing, and restart continuity. The last
+Stop/new/resume case failed before reset: the cancelled native turn retained a
+workspace preservation obligation, and the saved `/new` message did not cross
+that hold. The original failed result and its original cleanup grade are retained.
+Independent raw resource checks found one stopped allocation despite an empty
+filtered inventory; exact run, organization and ownership evidence authorized
+its separate deletion, followed by an authoritative resource 404.
+
+Native admission renewed the real preparation lease and changed the run to native
+mode without retiring that earlier ownership. The recorded future expiry can
+block workspace recovery after the provider has stopped. The original inspector
+log does not identify whether its coordinator, active-control or preparation-lease
+predicate fired first. A real PostgreSQL regression reproduces the stale fields
+on both local and remote admission. The repair clears `controllerBootId`,
+`controllerLeaseExpiresAt` and `executionStage` in the existing row-locked native
+admission transaction. The current preparation owner is still validated before
+the native coordinator commits. All twenty-eight controls pass, including foreign
+and expired ownership, cancellation before admission, transaction rollback, live
+preparation recovery and a later workspace synchronization failure. Workspace
+preservation, native ownership and physical Stop guards stay unchanged.
+
+Next, verify that handoff with a fresh local Stop/new/resume representative and
+the one remaining Daytona case. The controller must check every exact sandbox ID
+from authoritative run records, including failed attempts, even when filtered
+inventory is empty. Retain unaffected case evidence only under an explicit source
+impact record. Qualification promotion remains held until twenty distinct cases
+and physical resource and key closure are verified.
 Afterward build the normal four-platform daemon and eighteen-package distribution,
 verify ordinary installed local setup, and deploy the exact qualified revision
 only to `kimi.test.paperclip.app` for normal configuration, assigned-skill, CSV
