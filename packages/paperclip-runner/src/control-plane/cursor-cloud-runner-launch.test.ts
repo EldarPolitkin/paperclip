@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../drivers/runner-tool-bridge.js";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { request } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,17 @@ import { executeNativeSession } from "../native-session-runtime.js";
 import type { PrpEvent, PrpStructuredRunResult } from "../protocol/replay-contract.js";
 import type { DurablePrpControlPlane } from "./durable-prp-control-plane.js";
 import { createRunnerdCodexTransport, defaultCapabilityRunnerdBinary } from "../live/runnerd-codex-transport.js";
+import { copyOwnedNodeRuntime } from "../test-support/owned-node-runtime.js";
+
+async function privateCloudNodeCommand(root: string): Promise<string> {
+  const directory = join(root, "provider-node");
+  await mkdir(directory, { mode: 0o700 });
+  const { executable } = await copyOwnedNodeRuntime(directory);
+  // Keep Node's name so the verified launcher selects its descriptor loader.
+  const command = join(directory, process.platform === "win32" ? "node.exe" : "node");
+  await rename(executable, command);
+  return command;
+}
 
 function buildPrivateCursorCloudProxy(proxyPath: string): void {
   const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -40,6 +51,7 @@ it("opens and closes the real Cloud facade without a provider prompt", async () 
   const fetchLog = join(root, "unexpected-fetches.jsonl");
   const proxyPath = join(root, "cloud-proxy.cjs");
   buildPrivateCursorCloudProxy(proxyPath);
+  const providerNodeCommand = await privateCloudNodeCommand(root);
   const builtProxy = await readFile(proxyPath);
   const firstLine = builtProxy.indexOf(10) + 1;
   const guard = Buffer.from(`globalThis.fetch = async () => { require("node:fs").appendFileSync(${JSON.stringify(fetchLog)}, "unexpected fetch\\n", { mode: 0o600 }); throw new Error("Cloud launch preflight forbids provider requests"); };\n`);
@@ -51,7 +63,7 @@ it("opens and closes the real Cloud facade without a provider prompt", async () 
   const bundle = createRunnerdCodexTransport({
     provider: "cursor_cloud", cursorCloud,
     stateDirectory: join(root, "runner-session"),
-    runnerBinary: defaultCapabilityRunnerdBinary(),
+    runnerBinary: defaultCapabilityRunnerdBinary(), providerNodeCommand,
     cursorCloudProxyPath: proxyPath,
     cursorCloudProxySha256: `sha256:${createHash("sha256").update(await readFile(proxyPath)).digest("hex")}`,
     lifecyclePolicy: { mode: "per_turn" },
@@ -94,6 +106,7 @@ it("preserves native Cloud tool identity and redacted output through the real Ru
   const proxyPath = join(root, "cloud-proxy.cjs");
   const fetchLog = join(root, "controlled-fetches.jsonl");
   buildPrivateCursorCloudProxy(proxyPath);
+  const providerNodeCommand = await privateCloudNodeCommand(root);
   const runId = "run-22222222-2222-4222-8222-222222222222";
   const fixture = Buffer.from(`;(() => {
     const assert = require('node:assert/strict'), fs = require('node:fs');
@@ -131,7 +144,7 @@ it("preserves native Cloud tool identity and redacted output through the real Ru
   let authority: DurablePrpControlPlane | undefined;
   const bundle = createRunnerdCodexTransport({
     provider: "cursor_cloud", cursorCloud, stateDirectory: join(root, "runner-session"),
-    runnerBinary: defaultCapabilityRunnerdBinary(), cursorCloudProxyPath: proxyPath,
+    runnerBinary: defaultCapabilityRunnerdBinary(), providerNodeCommand, cursorCloudProxyPath: proxyPath,
     cursorCloudProxySha256: `sha256:${createHash("sha256").update(await readFile(proxyPath)).digest("hex")}`,
     lifecyclePolicy: { mode: "per_turn" },
     prpIdentity: { runnerInstanceId: "runner-cloud-tool", environmentLeaseId: "lease-cloud-tool",
@@ -181,6 +194,7 @@ async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean, 
   const proxyPath = join(root, "cloud-proxy.cjs");
   const fetchLog = join(root, "controlled-fetches.jsonl");
   buildPrivateCursorCloudProxy(proxyPath);
+  const providerNodeCommand = await privateCloudNodeCommand(root);
   const runId = "run-22222222-2222-4222-8222-222222222222";
   const fixture = Buffer.from(`;(() => {
     const assert = require('node:assert/strict'), fs = require('node:fs');
@@ -224,7 +238,7 @@ async function cloudQuestionHandoff(terminalDelayMs: number, governed: boolean, 
   let authority: DurablePrpControlPlane | undefined;
   const bundle = createRunnerdCodexTransport({
     provider: "cursor_cloud", cursorCloud, stateDirectory: join(root, "runner-session"),
-    runnerBinary: defaultCapabilityRunnerdBinary(), cursorCloudProxyPath: proxyPath,
+    runnerBinary: defaultCapabilityRunnerdBinary(), providerNodeCommand, cursorCloudProxyPath: proxyPath,
     cursorCloudProxySha256: `sha256:${createHash("sha256").update(await readFile(proxyPath)).digest("hex")}`,
     lifecyclePolicy: { mode: "per_turn" },
     prpIdentity: { runnerInstanceId: "runner-cloud-question", environmentLeaseId: "lease-cloud-question",
@@ -351,6 +365,7 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
   const fetchLog = join(root, "fetches.jsonl");
   const remoteStatePath = join(root, "remote.json");
   buildPrivateCursorCloudProxy(proxyPath);
+  const providerNodeCommand = await privateCloudNodeCommand(root);
   const fixture = Buffer.from(`;(() => {
     const assert = require('node:assert/strict'), fs = require('node:fs');
     if (!${JSON.stringify(validShutdown)}) {
@@ -400,7 +415,7 @@ async function cloudColdAuthorityRotation(instructions: string, validShutdown = 
     PAPERCLIP_CURSOR_CLOUD_CONFIG_PATH: configPath, PAPERCLIP_CURSOR_CLOUD_ARTIFACT_ROOT: join(runtime, "artifacts"),
     PAPERCLIP_CURSOR_CLOUD_RELAY_SOCKET_PATH: socketPath, PAPERCLIP_CURSOR_CLOUD_RELAY_TOKEN: token,
     PAPERCLIP_CURSOR_CLOUD_RELAY_URL: `https://relay.example.test/mcp/native-runs/${runId}`, PAPERCLIP_CURSOR_CLOUD_RELAY_EXPIRES_AT: String(Date.now() + 60_000) });
-  const options = { provider: "cursor_cloud" as const, cursorCloud, stateDirectory, runnerBinary: defaultCapabilityRunnerdBinary(),
+  const options = { provider: "cursor_cloud" as const, cursorCloud, stateDirectory, runnerBinary: defaultCapabilityRunnerdBinary(), providerNodeCommand,
     cursorCloudProxyPath: proxyPath, cursorCloudProxySha256: `sha256:${createHash("sha256").update(await readFile(proxyPath)).digest("hex")}`,
     lifecyclePolicy: { mode: "per_turn" as const } };
   const mcp = async (token: string, body: Record<string, unknown>, sessionId?: string, priorScopeHeader?: string): Promise<{ status: number; sessionId?: string; value: any }> => {
