@@ -3,8 +3,9 @@
 Owner: this chat, with separate provider, distribution, and product owners.
 Baseline: `dce004259394486f6361d0c0dd5a33a5272acc0a`.
 Branch: `codex/kimi-code-runner` in the existing managed worktree.
-Delivery: tested, reviewable PR stack: Runner foundation, then product setup and
-acceptance. Each slice must compile and remain below the repository review limit.
+Delivery: tested, reviewable PR stack: Runner foundation, shared Core Stop
+recovery, product setup and acceptance, then qualified pack delivery. Each slice
+must compile and remain below the repository review limit.
 Merge, publication, and production deployment
 are separate from this handoff. The user confirmed local plus Daytona acceptance.
 
@@ -151,12 +152,47 @@ and expired ownership, cancellation before admission, transaction rollback, live
 preparation recovery and a later workspace synchronization failure. Workspace
 preservation, native ownership and physical Stop guards stay unchanged.
 
-Next, verify that handoff with a fresh local Stop/new/resume representative and
-the one remaining Daytona case. The controller must check every exact sandbox ID
-from authoritative run records, including failed attempts, even when filtered
-inventory is empty. Retain unaffected case evidence only under an explicit source
-impact record. Qualification promotion remains held until twenty distinct cases
-and physical resource and key closure are verified.
+The preparation handoff repair passed a fresh local Stop/new/resume workflow at
+`a44ebc8abe8ebc766a207a9e68460db9829d6129`: three native runs, one authored
+server reset, generation one and a fresh final native session. Original result,
+raw evidence, native/control classification and physical cleanup pass. It is a
+representative regression check and adds no distinct case.
+
+A second real PostgreSQL regression found that a valid Stop can arrive after a
+workspace check has saved a twenty-four to thirty-six second retry delay. The
+existing post-cleanup callback did not advance that check when physical Stop
+became confirmed. The shared repair records one marker bound to the same run,
+recovery generation and closed native/physical receipt digest. Only the normal
+post-executor cleanup producer records that evidence. The recovery service can
+advance its matching Stop recheck once, preserving retries, window and provider
+cooldown. A marker arriving while the worker runs stays pending until its failure
+commit, so the notification cannot be lost. File preservation and model admission
+remain under their existing owners.
+
+The exact final positive fails against the prior implementation and passes with
+this repair. Nineteen final focused controls and typecheck pass. The earlier owning
+recovery and run-control suites passed one hundred thirty-two tests; those results
+retain their earlier test-module identity. The positive uses the actual resolved
+preserve-without-replay writer, saved human `/new` intent, real archive copy-back
+and normal explicit continuation admission. It proves timely reset eligibility;
+actual browser generation and a fresh native turn still require the final Daytona
+case. No blocker, timeout, grading, schema or polling change is included.
+
+The five shared Core source/test changes are a separate prerequisite,
+[#18245](https://github.com/paperclipai/paperclip/pull/18245), based on the frozen
+Runner foundation. Product retains its Kimi plan, UI, fixtures and provider files.
+Integration must preserve the complete intended product tree and prove real
+prerequisite ancestry. The final compiled Core must identify that integrated
+source; earlier Core, native and image identities are retained separately.
+
+Next, complete the one remaining Daytona Stop/new/resume case. The local
+representative remains valid because the additional event behavior requires a
+remote physical termination receipt and preserves local Stop policy. The
+controller must check every exact sandbox ID from authoritative run records,
+including failed attempts, even when filtered inventory is empty. Retain the
+nineteen passing cases only under the explicit source impact record. Qualification
+promotion remains held until twenty distinct cases and physical resource and key
+closure are verified.
 Afterward build the normal four-platform daemon and eighteen-package distribution,
 verify ordinary installed local setup, and deploy the exact qualified revision
 only to `kimi.test.paperclip.app` for normal configuration, assigned-skill, CSV
