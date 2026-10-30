@@ -18,15 +18,34 @@ it("delivers authenticated runtime activity through the real Runner bridge acros
   const workspace = join(root, "workspace");
   await Promise.all([mkdir(workspace), mkdir(join(root, "home"))]);
   const environment = { PATH: process.env.PATH, HOME: join(root, "home"), CODEX_HOME: join(root, "codex-home") };
+  let releasePrevious!: () => void, previousReleasing!: () => void, observedNewActivity!: () => void;
+  const previousRelease = new Promise<void>(resolve => { releasePrevious = resolve; });
+  const releasing = new Promise<void>(resolve => { previousReleasing = resolve; });
+  const observed = new Promise<void>(resolve => { observedNewActivity = resolve; });
+  let registrations = 0;
   const bundle = createRunnerdCodexTransport({
     runnerBinary: runner,
     codexCommand: resolve(import.meta.dirname, "../../runner/target/debug/fake-codex-app-server"),
     codexArgs: ["--state-file", join(root, "provider.json")],
     stateDirectory: root, environment,
+    controlPlaneRegistration: async authority => {
+      if (registrations++ === 0) {
+        await authority.start();
+        return { release: async () => { previousReleasing(); await previousRelease; } };
+      }
+      return { release: () => undefined };
+    },
     lifecyclePolicy: { mode: "warm", idleTimeoutMs: 60_000 },
     prpIdentity: { runnerInstanceId: "runner-activity", environmentLeaseId: "lease-activity",
       runId: "activity-first", normalizedSessionId: "session-activity", turnId: "turn-activity", itemId: "item-activity" },
   });
+  const notifications = bundle.transport.notifications.bind(bundle.transport);
+  bundle.transport.notifications = async function* () {
+    for await (const notification of notifications()) {
+      if (notification.method === "paperclip/runtimeActivityRecorded" && notification.params.runId === "activity-next") observedNewActivity();
+      yield notification;
+    }
+  };
   const driver = new CodexAppServerDriver({
     approvalPolicy: "never", includeCollaborationModeInstructions: false, environment,
     taskEnvelope: createCodexTaskEnvelope({ objective: "Verify runtime activity.", contractRevision: "1",
@@ -38,12 +57,14 @@ it("delivers authenticated runtime activity through the real Runner bridge acros
   } });
   const payload = { namespace: "example.runtime", activityKey: "screen.used" };
   let session: Awaited<ReturnType<typeof driver.openSession>> | undefined;
+  let attaching: Promise<void> | undefined;
   try {
     session = await driver.openSession({ runId: "activity-first", normalizedSessionId: "session-activity", workingDirectory: workspace });
     const firstContext = (await helper(["notification-context"])).stdout.trim();
     for (const runId of ["activity-first", "activity-next"]) {
       if (runId === "activity-next") {
-        await session.attachRun!({ runId });
+        attaching = session.attachRun!({ runId });
+        await releasing;
         await vi.waitFor(async () => {
           expect((await helper(["notification-context"])).stdout.trim()).not.toBe(firstContext);
         });
@@ -56,6 +77,12 @@ it("delivers authenticated runtime activity through the real Runner bridge acros
         expect(journal.committedEvents.some((event: { eventType: string; envelope: { runId: string } }) =>
           event.eventType === "runtime.activity.recorded" && event.envelope.runId === runId)).toBe(true);
       });
+      if (attaching) {
+        await observed;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        releasePrevious();
+        await attaching;
+      }
       await session.startTurn({ message: { role: "user", text: "Finish." } });
       const events = await collectUntilTerminal(session.events());
       const activities = events.filter(event => event.eventType === "runtime.activity.recorded");
@@ -64,6 +91,8 @@ it("delivers authenticated runtime activity through the real Runner bridge acros
       expect(validatePrpEvent(activities[0]).ok).toBe(true);
     }
   } finally {
+    releasePrevious();
+    await attaching?.catch(() => undefined);
     await session?.close();
     await bundle.transport.close();
     await rm(root, { recursive: true, force: true });

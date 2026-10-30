@@ -108,10 +108,10 @@ async function mapNotification(state: CodexSessionState, notification: CodexRpcN
 async function mapNotificationBody(state: CodexSessionState, notification: CodexRpcNotification): Promise<void> {
     if (notification.method === "paperclip/runtimeActivityRecorded") {
       const params = notification.params;
-      if ((params as Record<PropertyKey, unknown>)[RUNNERD_RUNTIME_ACTIVITY] === true
-        && params.runId === state.runId) {
-        state.emit("runtime.activity.recorded", record(params.payload));
-      }
+      if ((params as Record<PropertyKey, unknown>)[RUNNERD_RUNTIME_ACTIVITY] !== true) return;
+      const pending = state.pendingRunAttachment;
+      if (pending && params.runId === pending.runId && params.runId !== state.runId) await pending.settled;
+      if (params.runId === state.runId) state.emit("runtime.activity.recorded", record(params.payload));
       return;
     }
     if (!isSupportedCodexNotificationMethod(notification.method)) return;

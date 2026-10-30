@@ -679,6 +679,8 @@ is not independent proof that it happened and grants no resource permission.
 The native transport forwards runtime activity as a run-scoped fact. It retains
 the authenticated run identity across warm session attachment. Provider messages
 cannot impersonate this transport-owned notification.
+New-run activity waits for warm attachment to finish. A failed attachment does
+not retarget queued activity to the previous run.
 
 Runner accepts local activity records only with an opaque context
 captured before the operation. Warm run attachment and process recovery rotate
