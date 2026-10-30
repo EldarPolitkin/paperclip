@@ -10,6 +10,7 @@ import type { MatrixExecution } from "./types.js";
 const DATABASE_KEYS = ["DATABASE_URL", "DATABASE_MIGRATION_URL"] as const;
 const AMBIENT_PAPERCLIP_CREDENTIAL_KEYS = [
   "PAPERCLIP_API_KEY",
+  "PAPERCLIP_ACPX_CANDIDATE_ADMISSION",
   "PAPERCLIP_AGENT_API_KEY",
   "PAPERCLIP_TASK_BRIDGE_TOKEN",
   "PAPERCLIP_E2E_GATEWAY_TOKEN",
@@ -148,6 +149,7 @@ export function buildRunnerE2EProcessEnvironment(
   // Discard ambient admission. Only explicit candidate cells authorize the
   // exact model in their isolated server; credentials still use company secrets.
   delete result.PAPERCLIP_RUNNER_ACPX_QUALIFICATION;
+  delete result.PAPERCLIP_ACPX_CANDIDATE_ADMISSION;
   const candidates = new Map<string, string>();
   for (const execution of executions) {
     const agent = execution.profile.qualificationCandidate;
@@ -167,6 +169,7 @@ export function buildRunnerE2EProcessEnvironment(
     if (QUALIFIED_ACPX_PROFILES[agent].qualificationStatus !== "pending") {
       continue;
     }
+    if (agent === "kimi") continue;
     const prior = candidates.get(agent);
     if (prior !== undefined && prior !== execution.profile.model) throw new Error("Conflicting candidate models");
     candidates.set(agent, execution.profile.model);

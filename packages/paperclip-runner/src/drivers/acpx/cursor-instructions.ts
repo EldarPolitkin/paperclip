@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { admitAcpxSessionContext } from "./session-context-admission.js";
 
 const SCHEMA = "paperclip.cursor.instructions.v1";
 const MAX_BYTES = 32 * 1024;
@@ -70,4 +71,12 @@ export function createCursorInstructionAdmission(content: string) {
   };
 }
 
-export { admitAcpxInstructions as admitCursorInstructions } from "./instruction-admission.js";
+/** Cold ACPX ensureSession can return only a disk record. Establish a real load
+ * before admitting that handle; every later connection still gets its own guard.
+ */
+export async function admitCursorInstructions(
+  admission: ReturnType<typeof createCursorInstructionAdmission>,
+  input: { providerSpawned: boolean; load: () => Promise<void>; refreshCommand: () => Promise<void> },
+): Promise<void> {
+  await admitAcpxSessionContext(admission, input);
+}

@@ -21,6 +21,7 @@ import { nativeCompletionProfile, NATIVE_COMPLETION_BUDGET_CENTS } from "./nativ
 import { chatConfirmationTasks } from "./chat-cases.js";
 import { buildConnectionSuite } from "./connection-cases.js";
 import { buildGitHubReviewJourneySuite } from "./github-review-cases.js";
+import { buildAntigravityJourneySuite } from "./antigravity-journey-cases.js";
 import { hiringTemplateTasks, hiringTemplateProfile, hiringTemplateDefinitionDigest } from "./hiring-template-cases.js";
 import { copilotProviderDeathTasks } from "./copilot-active-stop-tasks.js";
 import { instructionPersistenceTask } from "./instruction-persistence.js";
@@ -1459,7 +1460,8 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       ...kimiLifecycleTasks,
     ].map(task => ({ ...task, automaticRetryPolicy: "single_attempt" as const })),
     expectedMatrixSize: 20,
-    definitionMetadata: { version: 6, binary: "2.3.3", model: "kimi-for-coding",
+    definitionMetadata: { version: 7, binary: "2.3.3", model: "kimi-for-coding",
+      candidateAdmission: "trusted-company-startup-restart-two-platform-v1", profileVersion: QUALIFIED_ACPX_PROFILES.kimi.agentProfileVersion,
       stopNewRunAccounting: "three-native-provider-runs-authored-reset-and-verified-predispatch-wait-v1",
       planPromptContract: "literal-first-line-markers-v2",
       modelDiscovery: "exact-model-authenticated-observed", qualification: "pending",
@@ -1861,6 +1863,7 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
   },
   buildConnectionSuite(runnerProfiles, runnerEnvironments),
   buildGitHubReviewJourneySuite(runnerProfiles, runnerEnvironments),
+  buildAntigravityJourneySuite(runnerEnvironments),
   {
     id: "repository-skills", label: "Repository skill packages", manualOnly: true,
     description: "Live private Poteto import and byte-for-byte delivery to local and Daytona agent runtimes.",
@@ -1944,8 +1947,8 @@ export function buildRunnerMatrix(
                   ]),
                 ],
                 requiredCredentials: [
-                  ...(["provider_connection", "github_review_journey"].includes(task.flow) ? [] : [profile.credential]),
-                  ...(!["provider_connection", "github_review_journey"].includes(task.flow) && selectedEnvironment.credential ? [selectedEnvironment.credential] : []),
+                  ...(["provider_connection", "github_review_journey", "antigravity_agent_journey"].includes(task.flow) ? [] : [profile.credential]),
+                  ...(!["provider_connection", "github_review_journey", "antigravity_agent_journey"].includes(task.flow) && selectedEnvironment.credential ? [selectedEnvironment.credential] : []),
                   ...(task.requiredCredentials ?? []),
                 ],
               };

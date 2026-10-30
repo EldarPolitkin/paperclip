@@ -3,6 +3,7 @@ import { assertValidAdapterLoginCapability } from "@paperclipai/adapter-utils";
 import { listServerAdapters, requireServerAdapter } from "./registry.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
+import { QUALIFIED_ACPX_PROFILES, KIMI_DISTRIBUTION_CLOSURE_SHA256 } from "../vendor/paperclip-runner/index.js";
 
 const { probeInstallation, probeGrokInstallation, probePiInstallation, probeKimiInstallation, probeKimiModels, probeKimiRemote, verifyApiKey } = vi.hoisted(() => ({
   verifyApiKey: vi.fn(),
@@ -122,7 +123,7 @@ describe("native ACPX environment checks", () => {
 
   it("requires an explicit Kimi credential and probes its own installed runtime during qualification", async () => {
     const model = "explicit-kimi-model";
-    vi.stubEnv("PAPERCLIP_RUNNER_ACPX_QUALIFICATION", JSON.stringify([{ agent: "kimi", model }]));
+    authorizeKimi(model);
     const config = { provider: "acpx", acpxAgent: "kimi", model };
     const missing = await requireServerAdapter("paperclip_runner").testEnvironment!({ ...context, config });
     expect(missing.status).toBe("fail");
@@ -131,8 +132,9 @@ describe("native ACPX environment checks", () => {
 
     const ready = await requireServerAdapter("paperclip_runner").testEnvironment!({ ...context, config: { ...config, env: { KIMI_API_KEY: "fixture-key" } } });
     expect(ready.status).toBe("pass");
-    expect(probeKimiInstallation).toHaveBeenCalledExactlyOnceWith(model);
-    expect(probeKimiModels).toHaveBeenCalledExactlyOnceWith(model, "fixture-key");
+    expect(probeKimiRemote).toHaveBeenCalledExactlyOnceWith("fixture-key", undefined, model, { companyId: context.companyId });
+    expect(probeKimiInstallation).not.toHaveBeenCalled();
+    expect(probeKimiModels).not.toHaveBeenCalled();
     expect(probeInstallation).not.toHaveBeenCalled();
     expect(verifyApiKey).not.toHaveBeenCalled();
     expect(ready.checks[0]).toMatchObject({ code: "kimi_metadata_verified", message: expect.stringContaining("No model prompt was sent") });
@@ -140,8 +142,8 @@ describe("native ACPX environment checks", () => {
 
   it("keeps a rejected Kimi catalog credential out of the ready lifecycle", async () => {
     const model = "explicit-kimi-model";
-    vi.stubEnv("PAPERCLIP_RUNNER_ACPX_QUALIFICATION", JSON.stringify([{ agent: "kimi", model }]));
-    probeKimiModels.mockRejectedValue(Object.assign(new Error("The Kimi Code credential was rejected by the model catalog."), { code: "KIMI_AUTH_REQUIRED" }));
+    authorizeKimi(model);
+    probeKimiRemote.mockRejectedValue(Object.assign(new Error("The Kimi Code credential was rejected by the model catalog."), { code: "KIMI_AUTH_REQUIRED" }));
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!({ ...context,
       config: { provider: "acpx", acpxAgent: "kimi", model, env: { KIMI_API_KEY: "fixture-key" } },
     });
@@ -151,7 +153,7 @@ describe("native ACPX environment checks", () => {
 
   it("requires the selected remote Kimi runtime and authenticated catalog instead of a host installation", async () => {
     const model = "explicit-kimi-model";
-    vi.stubEnv("PAPERCLIP_RUNNER_ACPX_QUALIFICATION", JSON.stringify([{ agent: "kimi", model }]));
+    authorizeKimi(model);
     const runner = { execute: vi.fn() };
     const target = { kind: "remote" as const, transport: "sandbox" as const, remoteCwd: "/workspace", providerKey: "test", runner };
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!({ ...context,
@@ -160,7 +162,7 @@ describe("native ACPX environment checks", () => {
     });
     expect(result.status).toBe("pass");
     expect(result.checks[0]).toMatchObject({ code: "kimi_metadata_verified" });
-    expect(probeKimiRemote).toHaveBeenCalledExactlyOnceWith("fixture-key", target, model);
+    expect(probeKimiRemote).toHaveBeenCalledExactlyOnceWith("fixture-key", target, model, { companyId: context.companyId });
     expect(runner.execute).not.toHaveBeenCalled();
     expect(probeKimiInstallation).not.toHaveBeenCalled();
     expect(probeKimiModels).not.toHaveBeenCalled();
@@ -311,3 +313,10 @@ describe("native ACPX environment checks", () => {
     expect(result.checks[0].code).toBe("acpx_runtime_unavailable");
   });
 });
+
+function authorizeKimi(model: string) {
+  vi.stubEnv("PAPERCLIP_ACPX_CANDIDATE_ADMISSION", JSON.stringify({ schema: "paperclip.acpx-candidate-admission.v1",
+    companyId: "company-test", agent: "kimi", model, profileDigest: QUALIFIED_ACPX_PROFILES.kimi.commandDigest,
+    platform: "linux", architecture: "x64", nativeClosureDigest: `sha256:${KIMI_DISTRIBUTION_CLOSURE_SHA256["linux-x64"]}`,
+    expiresAt: Date.now() + 60_000 }));
+}

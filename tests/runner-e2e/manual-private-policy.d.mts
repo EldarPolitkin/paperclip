@@ -1,5 +1,4 @@
-export function manualEvidenceRouting(environment: NodeJS.ProcessEnv): {
-  retention: "recurring" | "actions" | "private";
-  executionIds: string[];
+export function manualEvidenceRouting(env: Record<string, string | undefined>): {
+  retention: "recurring" | "actions" | "private"; executionIds: string[];
 };
 export function authorizeManualCellRoute(retention: string | undefined, executionId: string, privateIds: string): "actions" | "private";

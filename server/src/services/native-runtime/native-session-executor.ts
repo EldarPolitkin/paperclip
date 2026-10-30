@@ -1,3 +1,4 @@
+import { measureRunnerOperation, recordRunnerTimingReceipt } from "./runner-operation-timing.js";
 import { notifyExternalAgentSettlement } from "../../modules/external-agents/index.js";
 import { notifyNativeResultCommit } from "../native-result-commit-notifications.js";
 import { releaseRetainedNativeSessionCleanup } from "../retained-native-session-cleanup-notifications.js";
@@ -42,9 +43,10 @@ import { readNativePlanWait } from "./native-plan-wait.js";
 import { nativeProviderLifecycle } from "./provider-lifecycle.js";
 import { NativePermissionDeclinedError, readCompletedNativePermissionDecline } from "./native-permission-decline.js";
 import { activeIssueInteractionCondition } from "../issue-question-context.js";
-import { resolveAcpxQualification } from "./acpx-qualification.js";
+import { resolveAcpxQualification, resolveAntigravityCandidateAdmission, resolveKimiCandidateAdmission } from "./acpx-qualification.js";
 import { readLocalAiCredentialFile } from "../local-ai-credential-file.js";
 import { prepareGrokRunnerCredentials } from "./grok-runner-credentials.js";
+import { bindAntigravityCredentialTurn, bindAntigravityTransportRetirement, prepareAntigravityRunnerCredentials } from "./antigravity-runner-credentials.js";
 import { copyBackGrokAuth } from "@paperclipai/adapter-grok-local/server";
 
 import { inferOpenAiCompatibleBiller, type AdapterUsageCheckpoint } from "@paperclipai/adapter-utils";
@@ -907,7 +909,7 @@ export function resolveNativeProviderEnvironment(
   host: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   if (configured !== undefined) return configured;
-  if (provider.kind === "acpx" && ["pi", "cursor", "copilot", "kimi"].includes(provider.agent)) {
+  if (provider.kind === "acpx" && ["pi", "cursor", "copilot", "kimi", "antigravity"].includes(provider.agent)) {
     return buildNativeProviderEnvironment({}, host);
   }
   return host;
@@ -1943,9 +1945,14 @@ function runnerdStateBase(): string {
 }
 
 function scopedRunnerdStateRoot(execution: NativeExecutionInput): string {
+  // Antigravity's first release owns a fresh per-turn daemon. Its native
+  // conversation is stored separately and may load under each new run's grant.
+  const scope = execution.provider.kind === "acpx" && execution.provider.agent === "antigravity"
+    ? JSON.stringify([nativeSessionScopeKey(execution), execution.binding.runId])
+    : nativeSessionScopeKey(execution);
   return resolve(
     runnerdStateBase(),
-    createHash("sha256").update(nativeSessionScopeKey(execution)).digest("hex"),
+    createHash("sha256").update(scope).digest("hex"),
   );
 }
 
@@ -5633,6 +5640,7 @@ function runnerdStateRoot(execution: NativeExecutionInput): string {
     }
     return scoped;
   }
+  if (execution.provider.kind === "acpx" && execution.provider.agent === "antigravity") return scoped;
   for (const legacy of [
     legacyCompanyRunnerdStateRoot(execution),
     legacyRunnerdStateRoot(execution),
@@ -8057,6 +8065,25 @@ export async function executePaperclipNativeSession(input: {
 async function executePaperclipNativeSessionWithinScope(
   input: Parameters<typeof executePaperclipNativeSession>[0],
 ): Promise<AdapterExecutionResult> {
+  if (input.execution.provider.kind === "acpx" && input.execution.provider.agent === "antigravity") {
+    const candidate = resolveAntigravityCandidateAdmission({
+      companyId: input.execution.binding.companyId, model: input.execution.provider.model,
+    }, process.env);
+    if (!candidate || !input.useRunnerd || input.backend || input.restartRecovery
+      || input.runnerExecutionTarget?.kind === "remote"
+      || input.execution.session.lifecyclePolicy.mode !== "per_turn"
+      || ("homeMode" in input.execution && input.execution.homeMode === "preconfigured")) {
+      throw new Error("paperclip_runner_antigravity_candidate_ineligible: exact local per-turn candidate admission is required");
+    }
+  }
+  if (input.execution.provider.kind === "acpx" && input.execution.provider.agent === "kimi"
+    && QUALIFIED_ACPX_PROFILES.kimi.qualificationStatus === "pending") {
+    const target = input.runnerExecutionTarget?.kind === "remote"
+      ? { platform: "linux", architecture: "x64" } : { platform: process.platform, architecture: process.arch };
+    if (!input.useRunnerd || input.backend || !resolveKimiCandidateAdmission({
+      companyId: input.execution.binding.companyId, model: input.execution.provider.model, target,
+    }, process.env)) throw new Error("paperclip_runner_kimi_candidate_ineligible: exact trusted target admission is required");
+  }
   const restoredController = input.restartRecovery?.kind === "reattach_remote_runner"
     ? await restoreNativeRunnerCheckpoint(input.db, input.execution.binding, scopedRunnerdStateRoot(input.execution))
     : null;
@@ -8624,13 +8651,29 @@ async function executePaperclipNativeSessionWithinScope(
       privateKeyPem: input.runnerEnvironment?.PAPERCLIP_AGENT_PRIVATE_KEY,
       assertControllerActive,
       assertRunAdmissionActive,
+      onResultCommitted: async () => {
+        const at=Date.now();
+        await trace.record({name:"completion.result_committed",parentName:"native.session.execute",startedAtMs:at,endedAtMs:at});
+      },
+      onEventPersistence: async (event, startedAtMs, endedAtMs) => {
+        if (["turn.submitted", "turn.started", "turn.accepted", "run.result.accepted"].includes(event.eventType)) {
+          await trace.record({name: "runner.event.persist", parentName: "native.session.execute", startedAtMs, endedAtMs,
+            attributes:{eventKind:event.eventType}});
+        }
+      },
       onCommittedEvent: async (event) => {
+        if (event.eventType === "run.result.proposed") {
+          const at = Date.now();
+          await trace.record({name:"completion.tool_accepted",parentName:"native.session.execute",startedAtMs:at,endedAtMs:at});
+        }
         if (event.eventType === "harness.diagnostic") {
           await recordNativeProviderPerformanceSpans(trace, parseProviderPerformanceSpans(event.payload, Date.now()));
         }
         const textKind = !firstTokenRecorded ? observeDeliverableText(event) : null;
         if (textKind) {
           firstTokenRecorded = true;
+          const textAt = Date.now();
+          await trace.record({name:"response.first_nonempty_text",parentName:"native.session.execute",startedAtMs:textAt,endedAtMs:textAt});
           await trace.record({
             name: "task.time_to_first_token",
             parentName: "task.provider_session",
@@ -8719,7 +8762,7 @@ async function executePaperclipNativeSessionWithinScope(
         if (event.eventType === "turn.started" && turnStartedAtMs === null) {
           turnStartedAtMs = milestoneAtMs;
           await trace.record({
-            name: "provider.turn.queue",
+            name: "runner.turn.submitted_to_started",
             parentName: "agent.turn",
             startedAtMs: turnSubmittedAtMs ?? milestoneAtMs,
             endedAtMs: milestoneAtMs,
@@ -12266,6 +12309,8 @@ async function createRunnerdBackendWithinSessionClaim(
         return nativeCompletionFeedback(input.db, current.runId, result);
       },
       codexTransportFactory: recovery => createRunnerdCodexTransport({ provider: provider.kind, stateDirectory: root,
+        measureOperation: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() ? measureRunnerOperation : undefined,
+        recordTimingReceipt: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() ? recordRunnerTimingReceipt : undefined,
         ...owner.driver, runnerArtifact: input.controllerPersistence?.runnerArtifact ?? description.runner,
         controlPlaneRegistration: input.controllerPersistence ? async (authority, identity, signal) => {
           await nativeRunnerCheckpointRegistration({
@@ -13549,8 +13594,9 @@ async function createRunnerdBackendWithinSessionClaim(
     : input.execution;
   const preconfiguredHome = "homeMode" in input.execution && input.execution.homeMode === "preconfigured";
   const isGrok = input.execution.provider.kind === "acpx" && input.execution.provider.agent === "grok";
+  const isAntigravity = input.execution.provider.kind === "acpx" && input.execution.provider.agent === "antigravity";
   let effectiveRunnerEnvironmentBase: NodeJS.ProcessEnv = {
-    ...(isGrok
+    ...(isGrok || isAntigravity
       ? runnerEnvironment ?? {}
       : resolveNativeProviderEnvironment(input.execution.provider, runnerEnvironment)),
   };
@@ -13559,6 +13605,11 @@ async function createRunnerdBackendWithinSessionClaim(
     managedHome: input.managedAiCredentialHome,
   }) : null;
   if (grokCredential) effectiveRunnerEnvironmentBase = grokCredential.environment;
+  const antigravityCredential = isAntigravity ? await prepareAntigravityRunnerCredentials({
+    environment: effectiveRunnerEnvironmentBase, remote: Boolean(remoteTarget), managedHome: input.managedAiCredentialHome,
+    lifecycleMode: input.execution.session.lifecyclePolicy.mode,
+  }) : null;
+  if (antigravityCredential) effectiveRunnerEnvironmentBase = antigravityCredential.environment;
   if (relayAssignedMcp) {
     // The server-held tool authority owns this credential. Do not deliver a
     // duplicate HTTP MCP server or its bearer token to the remote provider.
@@ -13740,8 +13791,10 @@ async function createRunnerdBackendWithinSessionClaim(
       "paperclip-runner",
       "acpx",
     ),
-    codexTransportFactory: (recoveryContext) =>
-      createRunnerdCodexTransport({
+    codexTransportFactory: (recoveryContext) => {
+      const bundle = createRunnerdCodexTransport({
+        measureOperation: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() ? measureRunnerOperation : undefined,
+        recordTimingReceipt: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() ? recordRunnerTimingReceipt : undefined,
         onSpawn: input.onSpawn,
         ...(input.execution.provider.kind === "codex" ? { disableCodexWebSearch: "webSearch" in input.execution.provider && input.execution.provider.webSearch === "disabled" } : {}),
         homeMode: preconfiguredHome ? "preconfigured" : "isolated",
@@ -13771,6 +13824,12 @@ async function createRunnerdBackendWithinSessionClaim(
               acpxCandidateProfile: input.execution.provider.agent === "pi"
                 ? undefined
                 : resolveAcpxQualification(input.execution.provider, process.env),
+              acpxCandidateAdmission: input.execution.provider.agent === "antigravity"
+                ? resolveAntigravityCandidateAdmission({ companyId: input.execution.binding.companyId, model: input.execution.provider.model }, process.env)
+                : input.execution.provider.agent === "kimi" && QUALIFIED_ACPX_PROFILES.kimi.qualificationStatus === "pending"
+                  ? resolveKimiCandidateAdmission({ companyId: input.execution.binding.companyId, model: input.execution.provider.model,
+                    target: remoteTarget ? { platform: "linux", architecture: "x64" } : { platform: process.platform, architecture: process.arch } }, process.env)
+                  : undefined,
               acpxPermissionMode: input.execution.provider.permissionMode,
               acpxMode: input.execution.provider.mode,
               piThinkingLevel: input.execution.provider.piThinkingLevel,
@@ -13908,7 +13967,9 @@ async function createRunnerdBackendWithinSessionClaim(
           recoveryContext?.persistedSession?.activeTurnId ?? null,
         resumeProviderSession: recoveryContext?.persistedSession,
         providerRecoveryPolicy:
-          recoveryContext?.providerRecoveryPolicy ??
+          input.execution.provider.kind === "acpx" && input.execution.provider.agent === "antigravity"
+            ? "same_session_only"
+            : recoveryContext?.providerRecoveryPolicy ??
           (input.execution.provider.kind === "acpx" &&
           input.execution.interactionResponses.length > 0
             ? "allow_replacement_after_governed_wait"
@@ -14016,10 +14077,20 @@ async function createRunnerdBackendWithinSessionClaim(
             }
           },
         }),
-      }).transport,
+      });
+      return antigravityCredential?.home ? bindAntigravityTransportRetirement(bundle) : bundle.transport;
+    },
   });
   const boundManagedSessions = new WeakSet<NativeSession>();
   const wrapManagedSession = (session: NativeSession): NativeSession => {
+    if (antigravityCredential?.home && antigravityCredential.credential && !boundManagedSessions.has(session)) {
+      boundManagedSessions.add(session);
+      const runtimeHome = resolve(resolvePaperclipInstanceRoot(), "runtime", "paperclip-runner", "acpx", "acpx",
+        acpxRuntimeSessionDirectoryName(nativeSessionKey(input.execution)), "antigravity-home");
+      return bindAntigravityCredentialTurn(session, {
+        managedHome: antigravityCredential.home, credential: antigravityCredential.credential, runtimeHome,
+      });
+    }
     if (isGrok && grokCredential?.home && !boundManagedSessions.has(session)) {
       boundManagedSessions.add(session);
       // The launch runtime directory already ends in "acpx"; ACPX adds its

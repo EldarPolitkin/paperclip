@@ -51,6 +51,14 @@ the existing credential checks. The [launcher controls](../../packages/adapter-u
 and [real-shell staging controls](../../packages/adapter-utils/src/github-launcher-environment.test.ts)
 cover this local behavior, separately from live cloud execution and GitHub writes.
 
+Native Runner agents wait for task-bound work. A generic heartbeat interval does
+not create a taskless run or put an otherwise ready agent into an error state.
+Assigned tasks, task monitors, routines and task-bound timer wakes keep their
+existing admission paths; Legacy adapter intervals remain supported. The
+[scheduler](../../server/src/services/heartbeat/scheduling.test.ts) and
+[queue](../../server/src/services/heartbeat/queue.test.ts) regressions exercise
+this boundary with PostgreSQL and synthetic execution, separately from live task acceptance.
+
 For latency diagnosis with an operator OTLP endpoint, search the hashed run ID
 without restricting the root span name. Compare workspace preparation with its
 `workspace_<step>` intervals. Measure controller readiness separately through
@@ -93,6 +101,13 @@ lease until execution owns renewal; a genuine ownership loss must still detach.
 The [remote continuity regression](../../doc/testing-native-remote-continuity.md)
 uses a real Linux runner and deterministic provider. Live provider acceptance is
 a separate check.
+
+In a fresh sandbox workspace, fetch a different published branch with depth one,
+then save a local result and finish. Verify export imports the shallow history,
+retains host-only edits, and completes finalization without another provider turn.
+Repeat when the host already has that branch history; its ancestry must remain
+available. The filesystem sandbox regression covers transfer and merge behavior,
+not live provider acceptance.
 
 For a plugin computer, complete a task, let its warm session suspend, then send
 two follow-ups within the next warm window. Verify the first resumes the saved
@@ -169,6 +184,16 @@ version. Local, SSH and explicit custom commands retain operator management.
 Cloud onboarding must not offer shell commands the customer cannot run.
 
 Manual: Select the intended adapter and account, refresh model choices, and run its environment test. Save, reload, then execute a small task. Repeat with a deliberately unavailable account and verify the failure remains visible.
+
+The explicit-only [Antigravity agent journey](../../tests/runner-e2e/ANTIGRAVITY-AGENT-JOURNEY.md)
+checks a saved personal subscription, prompt-free native Test and exact low model,
+then independently correlates two actual downloaded outputs, accepted/committed
+Done lineage, native conversation continuity and owned runtime retirement. Its
+first settlement is captured before follow-up reopening; a later coordinator
+assessment cannot erase that historical Done decision. A failed finish must not
+mark prior completed file operations failed. The current local macOS ARM64
+candidate scope leaves fresh authorization, remote targets and release
+qualification unproven.
 
 For Legacy Codex, assign a service secret such as `SLACK_BOT_TOKEN` through agent
 configuration and run a task that checks its presence without printing its value.
@@ -347,8 +372,11 @@ See the canonical [delegated configuration guidance and acceptance evidence](con
 The pending native Kimi profile uses `paperclipai runtime setup kimi` on the
 execution host, an exact typed model, and a `KIMI_API_KEY` company secret.
 Existing legacy Kimi agents keep their saved runtime. The pending gate hides
-ordinary native Kimi hiring until qualification; a host-authorized test fixture
-is not proof of the ordinary setup journey.
+ordinary native Kimi hiring until qualification. The manual fixture seeds its
+company, then restarts its owned server with exact trusted company/model/profile/
+target/expiry authority before setup and Test. The grant cannot come from saved
+agent config or a public request. This fixture is not proof of the ordinary setup
+journey; the later qualified profile requires no candidate grant.
 
 Use the explicit `kimi-qualification` Product E2E suite for local and Daytona
 reply, semantic question/plan, file/download, Stop, and continuation cases.

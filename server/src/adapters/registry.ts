@@ -138,6 +138,7 @@ import { agentConfigurationDoc as piAgentConfigurationDoc } from "@paperclipai/a
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
+import { NativeEnvironmentProbeCleanupError } from "../vendor/paperclip-runner/index.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
 import {
@@ -418,7 +419,7 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
   async testEnvironment(context) {
     let profile: ReturnType<typeof resolvePaperclipRunnerProviderProfile>;
     try {
-      profile = resolvePaperclipRunnerProviderProfile(context.config);
+      profile = resolvePaperclipRunnerProviderProfile(context.config, { companyId: context.companyId });
     } catch (error) {
       const profileError = error instanceof PaperclipRunnerProviderProfileError
         ? error
@@ -450,6 +451,10 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
     }
     if (profile.provider === "acpx") {
       try {
+        if (profile.acpxAgent === "antigravity") {
+          const { testAntigravityConnection } = await import("../services/antigravity-connection-probe.js");
+          return await testAntigravityConnection(context, profile.model);
+        }
         if (profile.acpxAgent === "copilot") {
           const configured = context.config.env;
           const token = configured && typeof configured === "object" && !Array.isArray(configured)
@@ -473,21 +478,21 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
           }
         }
         const target = context.executionTarget;
+        if (profile.acpxAgent === "kimi") {
+          const { probeKimiExecutionTarget } = await import("../services/kimi-connection-probe.js");
+          await probeKimiExecutionTarget((context.config.env as Record<string, string>).KIMI_API_KEY, target, profile.model, { companyId: context.companyId });
+          return { adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
+            checks: [{ code: "kimi_metadata_verified", level: "info" as const,
+              message: "The selected environment verified the pinned Kimi Code runtime. Its Code model catalog accepted the credential and lists the exact selected model. No model prompt was sent." }] };
+        }
         if (target?.kind === "remote") {
-          if (profile.acpxAgent === "kimi") {
-            const { probeKimiExecutionTarget } = await import("../services/kimi-connection-probe.js");
-            await probeKimiExecutionTarget((context.config.env as Record<string, string>).KIMI_API_KEY, target, profile.model);
-            return { adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
-              checks: [{ code: "kimi_metadata_verified", level: "info" as const,
-                message: "The selected environment verified the pinned Kimi Code runtime. Its Code model catalog accepted the credential and lists the exact selected model. No model prompt was sent." }] };
-          }
           const probe = await runAdapterExecutionTargetShellCommand(
             `acpx-platform-${crypto.randomUUID()}`, target, "uname -s && uname -m",
             { cwd: target.remoteCwd, env: {}, timeoutSec: 15 },
           );
           if (probe.timedOut || probe.exitCode !== 0) throw new Error("Could not verify the remote ACPX runner platform.");
           const [os, arch] = probe.stdout.trim().split(/\s+/);
-          if (!((os === "Linux" && (arch === "x86_64" || (profile.acpxAgent === "claude" && ["aarch64", "arm64"].includes(arch)))) || (os === "Darwin" && (arch === "arm64" || (!["grok", "kimi"].includes(profile.acpxAgent) && arch === "x86_64"))))) {
+          if (!((os === "Linux" && (arch === "x86_64" || (profile.acpxAgent === "claude" && ["aarch64", "arm64"].includes(arch)))) || (os === "Darwin" && (arch === "arm64" || (!["grok"].includes(profile.acpxAgent) && arch === "x86_64"))))) {
             throw new Error(`ACPX ${profile.acpxAgent} requires a qualified Linux ${profile.acpxAgent === "claude" ? "x64/ARM64" : "x64"} or macOS architecture.`);
           }
           return verifyNativeClaudeApiKey(context.config, {
@@ -496,19 +501,20 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
               message: "The remote platform is supported. Runtime package integrity and readiness must still be verified by the remote runner before launch." }],
           });
         }
-        const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxCursorInstallation, probeAcpxPiInstallation, probeAcpxKimiInstallation, probeKimiModels } = await import("../vendor/paperclip-runner/live/index.js");
-        await (profile.acpxAgent === "kimi" ? probeAcpxKimiInstallation : profile.acpxAgent === "pi" ? probeAcpxPiInstallation : profile.acpxAgent === "grok" ? probeAcpxGrokInstallation : profile.acpxAgent === "cursor" ? probeAcpxCursorInstallation : probeAcpxClaudeInstallation)(profile.model);
-        if (profile.acpxAgent === "kimi") {
-          await probeKimiModels(profile.model, (context.config.env as Record<string, string>).KIMI_API_KEY);
-          return { adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
-            checks: [{ code: "kimi_metadata_verified", level: "info" as const,
-              message: "The Kimi Code runtime is verified. The Code model catalog accepted the bound credential and lists the exact selected model. No model prompt was sent." }] };
-        }
+        const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxCursorInstallation, probeAcpxPiInstallation } = await import("../vendor/paperclip-runner/live/index.js");
+        await (profile.acpxAgent === "pi" ? probeAcpxPiInstallation : profile.acpxAgent === "grok" ? probeAcpxGrokInstallation : profile.acpxAgent === "cursor" ? probeAcpxCursorInstallation : probeAcpxClaudeInstallation)(profile.model);
         return verifyNativeClaudeApiKey(context.config, {
           adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
           checks: [{ code: "acpx_runtime_ready", level: "info" as const, message: `ACPX ${profile.acpxAgent} runtime is installed and verified. Model access is checked when it runs.` }],
         });
       } catch (error) {
+        // The selected managed credential home must outlive an uncertain
+        // native retirement. Its caller retains writeback until proof arrives.
+        if (error instanceof NativeEnvironmentProbeCleanupError) throw error;
+        if (profile.acpxAgent === "antigravity") {
+          const { antigravityConnectionProbeFailure } = await import("../services/antigravity-connection-probe.js");
+          return antigravityConnectionProbeFailure(context.companyId, error);
+        }
         if (profile.acpxAgent === "copilot") {
           const details = error instanceof HttpError && error.details && typeof error.details === "object" && !Array.isArray(error.details)
             ? error.details as Record<string, unknown> : {};

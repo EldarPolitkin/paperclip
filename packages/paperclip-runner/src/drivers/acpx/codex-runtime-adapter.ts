@@ -1,4 +1,4 @@
-import { admitAcpxInstructions } from "./instruction-admission.js";
+import { admitAcpxSessionContext } from "./session-context-admission.js";
 import { createKimiInstructionAdmission } from "./kimi-instructions.js";
 import { kimiReadOnlyPermissionAllowed } from "./kimi-config.js";
 import { resolveGrokDisableWebSearch } from "./grok-web-search.js";
@@ -39,6 +39,7 @@ import type { AcpxModelStatus } from "./model-verification.js";
 import { AcpxApprovalRequiredError, decideAcpxPermission } from "./permission-policy.js";
 import { ACPX_CAPABILITY_PROFILES } from "./capability-profiles.js";
 import { createCursorInstructionAdmission } from "./cursor-instructions.js";
+import { createAntigravityAdmission } from "./antigravity-admission.js";
 import { createAcpxModeBinding } from "./provider-mode.js";
 import { assertCopilotPromptPolicy, createCopilotProtocolGuard } from "./copilot-policy.js";
 
@@ -332,6 +333,10 @@ export async function openQualifiedAcpxRuntime(
     : options.profile.agent === "cursor"
     ? createCursorInstructionAdmission(options.systemInstructions)
     : null;
+  const antigravityAdmission = options.profile.agent === "antigravity"
+    ? createAntigravityAdmission(options.systemInstructions, options.profile.reportedModelId)
+    : null;
+  const contextAdmission = instructionAdmission ?? antigravityAdmission;
   const runtimeOptions: GoalAwareAcpRuntimeOptions = {
     cwd: options.cwd,
     ...(instructionAdmission || modeBinding ? { protocolGuardFactory: () => {
@@ -341,6 +346,7 @@ export async function openQualifiedAcpxRuntime(
     } } : {}),
     ...(piThinking ? { protocolGuardFactory: () => piThinking.createGuard() } : {}),
     ...(effortAdmission ? { protocolGuardFactory: () => effortAdmission.createGuard() } : {}),
+    ...(antigravityAdmission ? { protocolGuardFactory: () => antigravityAdmission.createGuard() } : {}),
     sessionStore,
     agentRegistry: createRegistry({
       // Preserve Claude's ACP capability identity. This is metadata only: the
@@ -521,11 +527,11 @@ export async function openQualifiedAcpxRuntime(
         },
       }),
     );
-  const handshake = (instructionAdmission || modeBinding
+  const handshake = (contextAdmission || modeBinding
     ? ensuredSession.then(async (ensuredHandle) => {
         handle = ensuredHandle;
         options.signal?.throwIfAborted();
-        if (instructionAdmission) await admitAcpxInstructions(instructionAdmission, {
+        if (contextAdmission) await admitAcpxSessionContext(contextAdmission, {
           providerSpawned: commandLaunches.count > 0,
           load: async () => {
             // A fresh ACPX manager may reuse a saved record without spawning.
@@ -549,7 +555,7 @@ export async function openQualifiedAcpxRuntime(
         if (modeBinding && !modeBinding.isReady()) {
           if (!runtime.setConfigOption) throw new Error("Provider mode admission requires native mode configuration");
           await runtime.setConfigOption({ handle: ensuredHandle, key: modeBinding.configKey, value: modeBinding.selectedMode });
-          instructionAdmission?.assertReady();
+          contextAdmission?.assertReady();
           modeBinding.assertReady();
           await children.verifyLifetimeOwnership();
           options.signal?.throwIfAborted();
@@ -604,7 +610,7 @@ export async function openQualifiedAcpxRuntime(
     handle = options.signal
       ? await raceRuntimeHandshakeWithAbort(boundedHandshake, options.signal)
       : await boundedHandshake;
-    instructionAdmission?.assertReady();
+    contextAdmission?.assertReady();
     modeBinding?.assertReady();
     piThinking?.assertReady();
     effortAdmission?.assertReady();

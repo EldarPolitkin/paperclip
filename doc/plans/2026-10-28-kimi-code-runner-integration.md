@@ -5,7 +5,7 @@ Baseline: `dce004259394486f6361d0c0dd5a33a5272acc0a`.
 Branch: `codex/kimi-code-runner` in the existing managed worktree.
 Delivery: tested, reviewable PR stack: Runner foundation, shared Core Stop
 recovery, product setup and acceptance, then qualified pack delivery. Each slice
-must compile and remain below the repository review limit.
+must compile and group cohesive behavior for review.
 Merge, publication, and production deployment
 are separate from this handoff. The user confirmed local plus Daytona acceptance.
 
@@ -53,7 +53,58 @@ their existing contracts. Distribution is a pinned installed closure with no
 fallback to ambient Kimi. Runtime admission remains pending until required live
 qualification passes. Provider registration does not migrate legacy agents.
 
-## Acceptance ledger
+## Current release state — 2026-10-30
+
+The pending11 campaign is historical baseline evidence. Its final Daytona
+Stop/new/resume attempt failed because canonical sandbox reuse left an earlier
+lease for the same allocation without an explicit ownership handoff. The run
+created all three provider turns and completed the authored reset, but source inspection correctly
+rejected ambiguous ownership before file preservation. The original failure and
+cleanup evidence remain unchanged; the campaign has nineteen passing distinct
+cases, not twenty.
+
+The repair records an atomic server-owned handoff on both lease rows. Recovery
+accepts only the complete backward chain of inactive, finalized native owners
+with matching company, task, agent, workspace, provider and allocation. Missing,
+foreign, active, conflicting or additional owners remain blocked. The exact
+producer regression fails before the repair and passes with real file copyback;
+all 114 owning recovery tests pass. This is deterministic recovery evidence,
+not a replacement for the live Daytona case.
+
+The foundation also needs reconciliation with master
+`a8e07500db68f187b19de83823eb7fabf1196021`, which changes shared permission,
+turn attribution and runtime activity handling. Those native changes require a
+fresh pending14 identity, Mac ARM and Linux x64 artifacts, and twenty fresh
+qualification cases. The prior nineteen cases keep their exact source, fixture,
+profile and image identities and do not count toward pending14 acceptance.
+The earlier unexecuted promotion proposals remain historical preparations.
+Qualified15 promotion remains held until fresh acceptance and cleanup pass.
+
+CI rejected a stale Pi fixture in a shared Rust unit test after candidate13 was
+sealed. That declaration remains immutable. The corrected test and regenerated
+source metadata advance the candidate to14 before any new shipping build or live
+qualification. Both the original failure and candidate13 identity are retained.
+
+Pending qualification uses the existing trusted startup-admission channel with
+exact company, model, profile, platform closure, expiry, run and session bindings.
+A warm handoff may rotate only the authenticated run identity through the normal
+Runner authority transition. Saved agent configuration cannot grant candidate
+authority. Ordinary installed and hosted qualified setup must work without that
+test authority.
+
+| Required gate | Current evidence | Remaining proof |
+| --- | --- | --- |
+| Merged native behavior | Semantic reconciliation and focused controls in progress | Freeze merged source; build and verify both native targets |
+| Local and Daytona acceptance | Prior pending11 cases retained as baseline | Twenty fresh pending14 cases, including complete Stop/new recovery |
+| Credential isolation | SSH probe repair passes actual child-process argument tests | Integrate reviewed repair; verify ordinary Test |
+| Normal distribution | Maintained closure has eighteen public packages and four daemon targets | Exact qualified-source build, full checks and clean installed consumption |
+| Ordinary product setup | Isolated hosted TEST workspace reserved | Installed Mac and hosted Linux setup/Test/save/reopen, assigned skill, download and reconnect |
+
+Delivery remains a tested, reviewable PR stack and the isolated hosted TEST
+workspace. Production deployment, fleet defaults, stable publication and GitHub
+merge remain outside this handoff.
+
+## Historical pending11 acceptance ledger
 
 | Required gate | Environment | Observation | Verdict |
 | --- | --- | --- | --- |

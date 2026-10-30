@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertKimiInstallationProfile, verifyKimiInstallation } from "./kimi-installation.js";
 import { QUALIFIED_ACPX_PROFILES } from "./qualified-profiles.js";
+import { isSupportedAcpxProfileVersion } from "./profile-compatibility.js";
 
 const roots: string[] = [];
 const previous = new Map<string, string | undefined>();
@@ -38,6 +39,22 @@ describe("Kimi installed runtime admission", () => {
     ]);
     expect(() => assertKimiInstallationProfile({ ...QUALIFIED_ACPX_PROFILES.kimi,
       agentProfileVersion: 10, commandDigest: prior.commandDigest })).toThrow(/trusted declaration/);
+  });
+
+  it("preserves historical profile 11 while binding the reconciled authority and event boundaries in 13", () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/kimi-profile-v11-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("17b3db5659cfbaa4d3f5dddd8a97ffeab38353795aa4dbfa6c6fe1520f415ab1");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/kimi-profile-v13-identity.json", import.meta.url), "utf8"));
+    expect(prior.declaration.agentProfileVersion).toBe(11);
+    expect(Object.keys(prior.declaration.sources)).toHaveLength(31);
+    expect(current.declaration.agentProfileVersion).toBe(13);
+    expect(Object.keys(current.declaration.sources)).toHaveLength(55);
+    expect(Object.hasOwn(current.declaration.sources, "src/drivers/acpx/candidate-admission.ts")).toBe(true);
+    expect(Object.hasOwn(current.declaration.sources, "runner/crates/runner-core/src/provider_events.rs")).toBe(true);
+    expect(isSupportedAcpxProfileVersion("kimi", 11)).toBe(true);
+    expect(() => assertKimiInstallationProfile({ ...QUALIFIED_ACPX_PROFILES.kimi,
+      agentProfileVersion: 11, commandDigest: prior.commandDigest })).toThrow(/trusted declaration/);
   });
 
   it("gives the normal setup command and never falls back to ambient kimi when assets are missing", async () => {

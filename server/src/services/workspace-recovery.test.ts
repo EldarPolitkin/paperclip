@@ -24,6 +24,8 @@ import { executionWorkspaceService } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { projectTaskInterruption } from "./task-interruption-presentation.js";
+import * as nativeWorkspaceSync from "./native-runtime/native-workspace-sync.js";
+import { GitShallowMetadataError } from "@paperclipai/adapter-utils/git-workspace-sync";
 import { readSystemRecovery } from "./system-recovery-state.js";
 import { adoptSystemRecovery, updateSystemRecovery } from "./system-recovery.js";
 import { getStorageService } from "../storage/index.js";
@@ -46,10 +48,10 @@ import { resumePreservedResultFinalization } from "./preserved-result-finalizati
 import type { AdapterSandboxExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import type { EnvironmentLease } from "@paperclipai/shared";
 import { startEmbeddedPostgresTestDatabase } from "../__tests__/helpers/embedded-postgres.js";
-import { prepareNativeWorkspaceSync } from "./native-runtime/native-workspace-sync.js";
+import { prepareNativeWorkspaceSync, resumeNativeWorkspaceSync } from "./native-runtime/native-workspace-sync.js";
 import { nativeWorkspaceFinalizationLockKey } from "./native-runtime/native-workspace-finalization-ownership.js";
 import { remoteTerminationReceipt } from "./remote-execution-termination.js";
-import { prepareStoppedSandboxForRecovery } from "./sandbox-stop-and-retain.js";
+import { prepareStoppedSandboxForRecovery, prepareSandboxStopAndRetain, settleStopOnlyCleanup, readStopOnlyCleanup } from "./sandbox-stop-and-retain.js";
 import { recoverRetainedWorkspace, requestWorkspaceRecovery, scheduleRecoveredWorkspaceCleanup, reconcileRetainedWorkspaces, retainedWorkspaceCandidates } from "./workspace-recovery.js";
 import * as activity from "./activity-log.js";
 import { createDeliveryWorkCoordinator } from "./delivery-work-coordinator.js";
@@ -92,7 +94,7 @@ describe("automatic retained workspace recovery", () => {
     if (priorHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = priorHome;
     if (priorInstance === undefined) delete process.env.PAPERCLIP_INSTANCE_ID; else process.env.PAPERCLIP_INSTANCE_ID = priorInstance;
   });
-  async function seed(mode = "native", nativeDescriptor = true, resourceDisposition: "destroy" | "keep_running" = "destroy") {
+  async function seed(mode = "native", nativeDescriptor = true, resourceDisposition: "destroy" | "keep_running" = "destroy", reusable = false) {
     const companyId = randomUUID(), issueId = randomUUID(), agentId = randomUUID(), runId = randomUUID(), actionId: string = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "Workspace recovery", defaultResponsibleUserId: "board", issuePrefix: `R${companyId.slice(0, 6)}` });
     await db.insert(agents).values({ id: agentId, companyId, name: "Worker", adapterType: "paperclip_runner", status: "idle", runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } } });
@@ -104,10 +106,13 @@ describe("automatic retained workspace recovery", () => {
     const [environment] = await db.insert(environments).values({ name: runId, driver: "sandbox" }).returning();
     const providerLeaseId = randomUUID(), remote = path.join(root, runId, "remote"), host = path.join(root, runId, "host");
     await mkdir(host, { recursive: true }); await writeFile(path.join(host, "existing.txt"), "base\n");
-    const [lease] = await db.insert(environmentLeases).values({ companyId, issueId, heartbeatRunId: runId,
-      environmentId: environment.id, provider: "daytona", providerLeaseId, leasePolicy: "retain_on_failure", status: "released",
-      cleanupStatus: "success", releasedAt: new Date(), metadata: { remoteCwd: remote, driver: "sandbox", pluginId: randomUUID(), sandboxProviderPlugin: true },
-    }).returning();
+    const leaseValues = { companyId, issueId, heartbeatRunId: runId,
+      environmentId: environment.id, provider: "daytona", providerLeaseId,
+      metadata: { remoteCwd: remote, driver: "sandbox", pluginId: randomUUID(), sandboxProviderPlugin: true, ...(reusable ? { agentId } : {}) } };
+    const acquired = reusable ? await environmentService(db).acquireLease({ ...leaseValues, leasePolicy: "reuse_by_environment" }) : null;
+    const [lease] = acquired ? await db.select().from(environmentLeases).where(eq(environmentLeases.id, acquired.id))
+      : await db.insert(environmentLeases).values({ ...leaseValues, leasePolicy: "retain_on_failure", status: "released",
+        cleanupStatus: "success", releasedAt: new Date() }).returning();
     const target: AdapterSandboxExecutionTarget = { kind: "remote", transport: "sandbox", providerKey: "test", leaseId: lease.id,
       remoteCwd: remote, timeoutMs: 30_000, sandboxLeaseAcquisition: { outcome: "created", providerLeaseId },
       runner: { execute: input => new Promise((resolve, reject) => {
@@ -156,6 +161,207 @@ describe("automatic retained workspace recovery", () => {
   }
   const action = async (id: string) => (await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, id)))[0]!;
   const run = async (id: string) => (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, id)))[0]!;
+
+  async function warmHandoffSource(hops = 1, beforeStop?: (lease: typeof environmentLeases.$inferSelect) => Promise<void>) {
+    const prior = await seed("native", true, "keep_running", true), source = await run(prior.runId);
+    let previousTarget = targets.get(prior.lease.id)!, previousLeaseId = prior.lease.id;
+    let previousRunId: string = prior.runId;
+    let lease = prior.lease, current = source;
+    const leaseIds = [previousLeaseId];
+    for (let hop = 0; hop < hops; hop++) {
+      expect(await resumeNativeWorkspaceSync({ db, runId: previousRunId, target: previousTarget })).toBe(true);
+      await db.update(heartbeatRuns).set({ status: "succeeded", errorCode: null, resultJson: null }).where(eq(heartbeatRuns.id, previousRunId));
+      await db.update(nativeRunFinalizations).set({ phase: "committed" }).where(eq(nativeRunFinalizations.runId, previousRunId));
+      await db.delete(issueRecoveryActions).where(eq(issueRecoveryActions.id, prior.actionId));
+      await environmentService(db).releaseLease(previousLeaseId, "released", { cleanupStatus: "success" });
+      const [released] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, previousLeaseId));
+      [current] = await db.insert(heartbeatRuns).values({ companyId: prior.companyId, agentId: source.agentId,
+        issueId: prior.issueId, nativeIssueId: prior.issueId, runtimeMode: "native", status: "cancelled", finishedAt: new Date(),
+        contextSnapshot: { issueId: prior.issueId } }).returning();
+      await db.insert(nativeRunFinalizations).values({ companyId: prior.companyId, issueId: prior.issueId, runId: current.id, phase: "terminal_failure" });
+      const acquired = await environmentService(db).acquireLease({ companyId: prior.companyId, environmentId: prior.lease.environmentId!,
+        issueId: prior.issueId, heartbeatRunId: current.id, provider: "daytona", providerLeaseId: prior.providerLeaseId,
+        leasePolicy: "reuse_by_environment", replacesReusableLeaseId: previousLeaseId,
+        metadata: { ...released.metadata, sandboxLeaseAcquisition: { outcome: "resumed" } } });
+      [lease] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, acquired.id));
+      const target = { ...previousTarget, leaseId: lease.id, sandboxLeaseAcquisition: { outcome: "resumed" as const, providerLeaseId: prior.providerLeaseId } };
+      targets.set(lease.id, target);
+      expect(await prepareNativeWorkspaceSync({ db, companyId: prior.companyId, workspaceId: prior.issueId,
+        workspaceLocalDir: prior.host, runId: current.id, lease: lease as EnvironmentLease, target, resourceDisposition: "keep_running" })).not.toBeNull();
+      leaseIds.push(lease.id); previousRunId = current.id; previousLeaseId = lease.id; previousTarget = target;
+    }
+    [lease] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, lease.id));
+    await beforeStop?.(lease);
+    await writeFile(path.join(prior.remote, "after-warm-stop.txt"), "stopped turn work\n");
+    await recordRequiredWorkspaceRestoreFailure(db, await run(current.id), { workspaceRestoreFailure: "restore_failed" }, lease);
+    const [action] = await db.select().from(issueRecoveryActions).where(and(eq(issueRecoveryActions.companyId, prior.companyId),
+      eq(issueRecoveryActions.fingerprint, `native-workspace:${current.id}`)));
+    const [retained] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, lease.id));
+    const stopping = readStopOnlyCleanup(retained) ? retained : await prepareSandboxStopAndRetain(db, retained);
+    expect(stopping).not.toBeNull();
+    expect(await settleStopOnlyCleanup(db, stopping!, { attemptId: String(stopping!.metadata!.pendingCleanupAttemptId),
+      receipt: { providerLeaseId: prior.providerLeaseId, state: "stopped" } })).not.toBeNull();
+    return { ...prior, priorRunId: prior.runId, priorLeaseId: prior.lease.id, leaseIds, runId: current.id, lease, actionId: action.id,
+      input: { ...prior.input, runId: current.id, actionId: action.id } };
+  }
+
+  describe("verified warm allocation handoffs", () => {
+    let original: { db: typeof db; root: string; connectionString: string; home: string | undefined };
+    let isolated: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | undefined;
+    let isolatedDb: typeof db | undefined;
+    let isolatedRoot: string | undefined;
+    beforeAll(async () => {
+      original = { db, root, connectionString, home: process.env.PAPERCLIP_HOME };
+      isolated = await startEmbeddedPostgresTestDatabase("workspace-warm-handoff-");
+      isolatedDb = createDb(isolated.connectionString);
+      isolatedRoot = await mkdtemp(path.join(os.tmpdir(), "workspace-warm-handoff-files-"));
+      db = isolatedDb; root = isolatedRoot; connectionString = isolated.connectionString;
+      process.env.PAPERCLIP_HOME = path.join(root, "home");
+    }, 30_000);
+    afterAll(async () => {
+      await isolatedDb?.$client.end(); await isolated?.cleanup();
+      if (isolatedRoot) await rm(isolatedRoot, { recursive: true, force: true });
+      if (original) {
+        db = original.db; root = original.root; connectionString = original.connectionString;
+        if (original.home === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = original.home;
+      }
+    });
+  it.each([1, 2])("recovers a stopped native source after %s verified warm predecessor handoffs", async hops => {
+    const f = await warmHandoffSource(hops);
+    expect((await run(f.priorRunId)).runnerProfileJson?.nativeWorkspaceSync).toMatchObject({ state: "finalized", leaseId: f.priorLeaseId });
+    const [previous] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.priorLeaseId));
+    expect(previous).toMatchObject({ status: "expired", cleanupStatus: "success", providerLeaseId: f.providerLeaseId });
+    await recoverRetainedWorkspace(f.input);
+    expect(readSystemRecovery((await action(f.actionId)).evidence)?.state).toBe("complete");
+    expect(await hasVerifiedWorkspaceRepair(db, await run(f.runId))).toBe(true);
+    expect(await readFile(path.join(f.host, "after-warm-stop.txt"), "utf8")).toBe("stopped turn work\n");
+    const source = await run(f.runId), freshProviderLeaseId = randomUUID();
+    const [fresh] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: source.agentId,
+      issueId: f.issueId, nativeIssueId: f.issueId, runtimeMode: "native", status: "succeeded", finishedAt: new Date() }).returning();
+    const remoteCwd = path.join(root, fresh.id, "remote");
+    const freshLease = await environmentService(db).acquireLease({ companyId: f.companyId, environmentId: f.lease.environmentId!,
+      issueId: f.issueId, heartbeatRunId: fresh.id, provider: "daytona", providerLeaseId: freshProviderLeaseId,
+      metadata: { ...f.lease.metadata, remoteCwd } });
+    const freshTarget = { ...targets.get(f.lease.id)!, leaseId: freshLease.id, remoteCwd,
+      sandboxLeaseAcquisition: { outcome: "created" as const, providerLeaseId: freshProviderLeaseId } };
+    expect(await prepareNativeWorkspaceSync({ db, companyId: f.companyId, workspaceId: f.issueId,
+      workspaceLocalDir: f.host, runId: fresh.id, lease: freshLease, target: freshTarget, resourceDisposition: "keep_running" })).not.toBeNull();
+    expect(await resumeNativeWorkspaceSync({ db, runId: fresh.id, target: freshTarget })).toBe(true);
+    expect(await inspectWorkspaceSource(db, { companyId: f.companyId, issueId: f.issueId, runId: f.runId, actionId: f.actionId }))
+      .toMatchObject({ status: "verified" });
+  }, 30_000);
+
+  it.each(["active", "active_run", "active_control", "foreign_company", "environment", "workspace", "task", "agent", "unfinalized", "owner", "missing_proof", "conflicting_proof", "dangling_proof", "extra_history"])(
+    "keeps ambiguous warm source history fenced: %s", async fault => {
+      const f = await warmHandoffSource();
+      const [previous] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.priorLeaseId));
+      if (fault === "active") await db.update(environmentLeases).set({ status: "active" }).where(eq(environmentLeases.id, previous.id));
+      if (fault === "active_run") await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, f.priorRunId));
+      if (fault === "active_control") adapterExecutionControls.set(f.priorRunId, createAdapterExecutionControl());
+      if (fault === "foreign_company") {
+        const [foreign] = await db.insert(companies).values({ name: "Foreign owner", issuePrefix: `F${randomUUID().slice(0, 6)}` }).returning();
+        await db.update(environmentLeases).set({ companyId: foreign.id }).where(eq(environmentLeases.id, previous.id));
+      }
+      if (fault === "environment") {
+        const [other] = await db.insert(environments).values({ name: randomUUID(), driver: "sandbox" }).returning();
+        await db.update(environmentLeases).set({ environmentId: other.id }).where(eq(environmentLeases.id, previous.id));
+      }
+      if (fault === "workspace") {
+        const [other] = await db.insert(executionWorkspaces).values({ companyId: f.companyId, mode: "isolated_workspace", strategyType: "test", name: "Other workspace" }).returning();
+        await db.update(environmentLeases).set({ executionWorkspaceId: other.id }).where(eq(environmentLeases.id, previous.id));
+      }
+      if (fault === "task") {
+        const [other] = await db.insert(issues).values({ companyId: f.companyId, title: "Other task" }).returning();
+        await db.update(environmentLeases).set({ issueId: other.id }).where(eq(environmentLeases.id, previous.id));
+      }
+      if (fault === "agent") {
+        const [other] = await db.insert(agents).values({ companyId: f.companyId, name: "Other agent", adapterType: "paperclip_runner" }).returning();
+        await db.update(heartbeatRuns).set({ agentId: other.id }).where(eq(heartbeatRuns.id, f.priorRunId));
+      }
+      if (fault === "unfinalized") {
+        const prior = await run(f.priorRunId), reference = prior.runnerProfileJson!.nativeWorkspaceSync as Record<string, unknown>;
+        await db.update(heartbeatRuns).set({ runnerProfileJson: { ...prior.runnerProfileJson, nativeWorkspaceSync: { ...reference, state: "prepared", finalHostSha256: null } } }).where(eq(heartbeatRuns.id, prior.id));
+      }
+      if (fault === "owner") await db.update(nativeRunFinalizations).set({ leaseOwner: randomUUID() }).where(eq(nativeRunFinalizations.runId, f.priorRunId));
+      if (fault === "missing_proof") {
+        const metadata = { ...previous.metadata }; delete metadata.reusableLeaseSuccessor;
+        await db.update(environmentLeases).set({ metadata }).where(eq(environmentLeases.id, previous.id));
+      }
+      if (fault === "conflicting_proof") await db.update(environmentLeases).set({ metadata: { ...previous.metadata,
+        reusableLeaseSuccessor: { ...(previous.metadata!.reusableLeaseSuccessor as Record<string, unknown>), successorRunId: randomUUID() } } }).where(eq(environmentLeases.id, previous.id));
+      if (fault === "dangling_proof") await db.update(environmentLeases).set({ metadata: { ...previous.metadata, reusableLeasePredecessor: {} } }).where(eq(environmentLeases.id, previous.id));
+      if (fault === "extra_history") await db.insert(environmentLeases).values({ companyId: f.companyId, environmentId: previous.environmentId,
+        heartbeatRunId: f.priorRunId, issueId: f.issueId, provider: "daytona", providerLeaseId: f.providerLeaseId,
+        status: "expired", leasePolicy: "reuse_by_environment", cleanupStatus: "success", metadata: previous.metadata });
+      try {
+        expect(await inspectWorkspaceSource(db, { companyId: f.companyId, issueId: f.issueId, runId: f.runId, actionId: f.actionId }))
+          .toMatchObject({ status: "blocked", failureCode: "allocation_ownership_ambiguous" });
+        await expect(readFile(path.join(f.host, "after-warm-stop.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally { adapterExecutionControls.get(f.priorRunId)?.finish(); adapterExecutionControls.delete(f.priorRunId); }
+    }, 30_000);
+
+  it("keeps server handoff receipts across metadata updates and same-run reacquisition", async () => {
+    const f = await warmHandoffSource(1, async lease => {
+      const proof = lease.metadata!.reusableLeasePredecessor;
+      expect(proof).toMatchObject({ schema: "paperclip.reusable-lease-handoff.v1", successorLeaseId: lease.id });
+      const forged = { schema: "forged-provider-metadata" };
+      const updated = await environmentService(db).updateLeaseMetadata(lease.id, { ...lease.metadata,
+        reusableLeasePredecessor: forged, reusableLeaseSuccessor: forged, marker: "updated" });
+      expect(updated!.metadata?.reusableLeasePredecessor).toEqual(proof);
+      expect(updated!.metadata?.reusableLeaseSuccessor).toBeUndefined();
+      await environmentService(db).releaseLease(lease.id, "released", { cleanupStatus: "success" });
+      const reacquired = await environmentService(db).acquireLease({ companyId: lease.companyId, environmentId: lease.environmentId!,
+        issueId: lease.issueId, heartbeatRunId: lease.heartbeatRunId, provider: lease.provider, providerLeaseId: lease.providerLeaseId,
+        leasePolicy: "reuse_by_environment", reusesReusableLeaseId: lease.id,
+        metadata: { ...updated!.metadata, reusableLeasePredecessor: forged, reusableLeaseSuccessor: forged } });
+      expect(reacquired.id).toBe(lease.id);
+      expect(reacquired.metadata?.reusableLeasePredecessor).toEqual(proof);
+      expect(reacquired.metadata?.reusableLeaseSuccessor).toBeUndefined();
+    });
+    await recoverRetainedWorkspace(f.input);
+    expect(await hasVerifiedWorkspaceRepair(db, await run(f.runId))).toBe(true);
+  }, 30_000);
+
+  it("does not manufacture handoff authority from injected fresh or orphan lease metadata", async () => {
+    const f = await warmHandoffSource(), source = await run(f.runId);
+    const forged = { schema: "paperclip.reusable-lease-handoff.v1", successorLeaseId: f.lease.id };
+    const values = { companyId: f.companyId, environmentId: f.lease.environmentId!, issueId: f.issueId,
+      heartbeatRunId: source.id, provider: "daytona", providerLeaseId: randomUUID(),
+      metadata: { agentId: source.agentId, reusableLeasePredecessor: forged, reusableLeaseSuccessor: forged } };
+    const fresh = await environmentService(db).acquireLease(values);
+    const orphan = await environmentService(db).insertPendingCleanupLease({ ...values, providerLeaseId: randomUUID(), failureReason: "test" });
+    for (const lease of [fresh, orphan]) {
+      expect(lease.metadata?.reusableLeasePredecessor).toBeUndefined();
+      expect(lease.metadata?.reusableLeaseSuccessor).toBeUndefined();
+    }
+  }, 30_000);
+
+  it("rolls back both handoff links and keeps provider mismatches or retained sources fenced", async () => {
+    const f = await warmHandoffSource(), source = await run(f.runId), service = environmentService(db);
+    const values = { companyId: f.companyId, environmentId: f.lease.environmentId!, issueId: f.issueId,
+      heartbeatRunId: f.priorRunId, provider: "daytona", providerLeaseId: randomUUID(),
+      leasePolicy: "reuse_by_environment" as const, metadata: { agentId: source.agentId } };
+    const prior = await service.acquireLease(values);
+    await service.releaseLease(prior.id, "released", { cleanupStatus: "success" });
+    const [before] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, prior.id));
+    const rollback = new Error("rollback_handoff");
+    await expect(db.transaction(async tx => {
+      const acquired = await environmentService(tx as unknown as typeof db).acquireLease({ ...values, heartbeatRunId: f.runId, replacesReusableLeaseId: prior.id });
+      expect(acquired.metadata?.reusableLeasePredecessor).toMatchObject({ previousLeaseId: prior.id, successorLeaseId: acquired.id });
+      throw rollback;
+    })).rejects.toBe(rollback);
+    expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, prior.id)))[0]).toEqual(before);
+    expect(await db.select().from(environmentLeases).where(eq(environmentLeases.providerLeaseId, values.providerLeaseId))).toHaveLength(1);
+    await expect(service.acquireLease({ ...values, heartbeatRunId: f.runId, provider: "foreign-provider", replacesReusableLeaseId: prior.id })).rejects.toThrow("ownership changed");
+    await expect(service.acquireLease({ ...values, providerLeaseId: f.providerLeaseId, replacesReusableLeaseId: f.lease.id })).rejects.toThrow("ownership changed");
+    const [later] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: source.agentId, issueId: f.issueId,
+      nativeIssueId: f.issueId, runtimeMode: "native", status: "succeeded", finishedAt: new Date() }).returning();
+    await service.acquireLease({ ...values, heartbeatRunId: later.id, providerLeaseId: f.providerLeaseId });
+    expect(await inspectWorkspaceSource(db, { companyId: f.companyId, issueId: f.issueId, runId: f.runId, actionId: f.actionId }))
+      .toMatchObject({ status: "blocked", failureCode: "allocation_ownership_ambiguous" });
+  }, 30_000);
+
+  });
 
   it("unblocks a pending workspace selection only after a superseded retry's real files are preserved", async () => {
     const f = await seed();
@@ -511,8 +717,11 @@ describe("automatic retained workspace recovery", () => {
     expect((await Promise.all(observed)).some(rows => rows.some(row => row.status === "succeeded"))).toBe(true);
   });
 
-  it("re-enters only the existing finalizer for an accepted result, once per intent, preserving failure history", async () => {
-    const f = await seed();
+  it.each(["retain_on_failure", "reuse_by_environment", "reuse_by_execution_workspace"] as const)("re-enters only the accepted result finalizer for %s, preserving files and failure history", async leasePolicy => {
+    const f = await seed("native", true, "keep_running");
+    await db.update(environmentLeases).set({ leasePolicy }).where(eq(environmentLeases.id, f.lease.id));
+    await db.update(issueRecoveryActions).set({ cause: "native_workspace_sync_out_retry_exhausted" }).where(eq(issueRecoveryActions.id, f.actionId));
+    await db.update(heartbeatRuns).set({ resultJson: {} }).where(eq(heartbeatRuns.id, f.runId));
     const contractId = randomUUID(), resultId = randomUUID();
     await db.insert(completionContracts).values({ id: contractId, companyId: f.companyId, issueId: f.issueId,
       revision: 1, schemaVersion: "paperclip.completion-contract.v1", policyVersion: "test", risk: "standard",
@@ -525,7 +734,24 @@ describe("automatic retained workspace recovery", () => {
     await db.update(nativeRunFinalizations).set({ resultId, attempt: 3, failureCode: "native_workspace_sync_out_retry_exhausted" })
       .where(eq(nativeRunFinalizations.runId, f.runId));
     expect(await resumePreservedResultFinalization(db, f.companyId, f.runId)).toBe(false);
+    const priorAction = await action(f.actionId);
+    await db.update(issueRecoveryActions).set({ ownerType: "system", evidence: { ...priorAction.evidence,
+      systemRecovery: failSystemRecovery(createSystemRecovery(f.runId),
+        new SystemRecoveryFailure("source_binding_invalid", "service_required")),
+      workspaceRecovery: { schema: "paperclip.workspace-recovery.v1", runId: f.runId, status: "blocked",
+        stage: "verifying_stop", attempt: 1, attemptLimit: 6, requestIds: [] },
+    } }).where(eq(issueRecoveryActions.id, f.actionId));
+    const request = { ...f.input, actorId: "board", idempotencyKey: randomUUID() };
+    await requestWorkspaceRecovery(request);
+    const admitted = await action(f.actionId);
+    await requestWorkspaceRecovery(request);
+    expect(await action(f.actionId)).toEqual(admitted);
+    expect(admitted.ownerType).toBe("system");
     await recoverRetainedWorkspace(f.input);
+    expect(readSystemRecovery((await action(f.actionId)).evidence)?.state).toBe("complete");
+    expect(await readFile(path.join(f.host, "saved.txt"), "utf8")).toBe("finished work\n");
+    expect(await readFile(path.join(f.host, "newer.txt"), "utf8")).toBe("newer local work\n");
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, f.companyId))).toHaveLength(0);
     const attempts = await Promise.all([resumePreservedResultFinalization(db, f.companyId, f.runId),
       resumePreservedResultFinalization(db, f.companyId, f.runId)]);
     expect(attempts.filter(Boolean)).toHaveLength(1);
@@ -596,6 +822,20 @@ describe("automatic retained workspace recovery", () => {
     expect(await readFile(path.join(attached[0].path, "provenance.json"), "utf8")).toContain(f.runId);
     expect(await attachPreservedWorkspaceSnapshots({ db, companyId: f.companyId, issueId: randomUUID(),
       sourceRunIds: [laterId], cwd: next })).toEqual([]);
+  }, 30_000);
+
+  it("retains files and the recovery barrier when native export rejects Git metadata", async () => {
+    const f = await seed();
+    const restore = vi.spyOn(nativeWorkspaceSync, "resumeNativeWorkspaceSync")
+      .mockRejectedValueOnce(new GitShallowMetadataError("Git shallow metadata exceeds its byte limit"));
+    try { await recoverRetainedWorkspace(f.input); } finally { restore.mockRestore(); }
+    expect(readSystemRecovery((await action(f.actionId)).evidence)).toMatchObject({ state: "exhausted",
+      failure: { code: "snapshot_verification_failed", retryClass: "service_required" }, preservationOperationIds: [] });
+    expect(await hasVerifiedWorkspaceRepair(db, await run(f.runId))).toBe(false);
+    expect(await readFile(path.join(f.remote, "saved.txt"), "utf8")).toBe("finished work\n");
+    expect(await readFile(path.join(f.host, "newer.txt"), "utf8")).toBe("newer local work\n");
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, f.companyId))).toHaveLength(0);
+    expect((await run(f.runId)).status).toBe("failed");
   }, 30_000);
 
   it("reconciles an uploaded snapshot after a lost upload acknowledgement without exporting again", async () => {
