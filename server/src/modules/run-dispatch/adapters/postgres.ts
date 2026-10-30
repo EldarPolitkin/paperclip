@@ -2,7 +2,7 @@ import { hasRequiredWorkspaceRecovery } from "../../../services/workspace-restor
 import { readNativeWorkspaceSyncReference } from "../../../services/native-runtime/native-workspace-sync.js";
 import { isPreDispatchExecutionWaitVerified } from "../../../services/pre-dispatch-execution-wait.js";
 import { isUserCommentContinuationReason } from "../../../services/explicit-native-continuation.js";
-import { queuedCommentIdsFromRunContext, withQueuedCommentIdsInWakePayload } from "../../../services/issue-queued-comment-queue.js";
+import { queuedCommentIdsFromRunContext, queuedCommentIdsFromWakePayload, withQueuedCommentIdsInWakePayload } from "../../../services/issue-queued-comment-queue.js";
 import { notifyExternalAgentSettlement } from "../../external-agents/index.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../../../services/unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../../../services/cancelled-workspace-preservation-notifications.js";
@@ -948,15 +948,30 @@ export function createPostgresRunDispatchAdapter(
       eq(agentWakeupRequests.requestedByActorType, "user"),
     )).for("update");
     const payload = parseObject(wake?.payload);
+    const originalCommentId = readNonEmptyString(payload.commentId);
     if (!wake?.requestedByActorId || payload.issueId !== issueId ||
-        (typeof payload.commentId === "string" && payload.commentId !== commentId)) return null;
+        !originalCommentId || !commentIds.includes(originalCommentId)) return null;
     const comments = await tx.select().from(issueComments).where(and(
       eq(issueComments.companyId, run.companyId), eq(issueComments.issueId, issueId),
       inArray(issueComments.id, commentIds), eq(issueComments.authorType, "user"),
       sql`${issueComments.deletedAt} is null`, sql`${issueComments.createdByRunId} is null`,
     ));
-    if (comments.length !== commentIds.length || comments.some(comment => !comment.body.trim()) ||
-        comments.find(comment => comment.id === commentId)?.authorUserId !== wake.requestedByActorId) return null;
+    if (comments.length !== commentIds.length || comments.some(comment =>
+      !comment.body.trim() || comment.authorUserId !== wake.requestedByActorId)) return null;
+    const coalesced = await tx.select().from(agentWakeupRequests).where(and(
+      eq(agentWakeupRequests.companyId, run.companyId), eq(agentWakeupRequests.agentId, run.agentId),
+      eq(agentWakeupRequests.runId, run.id), eq(agentWakeupRequests.status, "coalesced"),
+      sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
+      eq(agentWakeupRequests.reason, "issue_execution_same_name"),
+      eq(agentWakeupRequests.requestedByActorType, "user"), eq(agentWakeupRequests.requestedByActorId, wake.requestedByActorId),
+    )).for("update");
+    const recordedCommentIds = new Set([wake, ...coalesced].flatMap(receipt => {
+      const recordedPayload = parseObject(receipt.payload);
+      const recordedCommentId = readNonEmptyString(recordedPayload.commentId);
+      return recordedPayload.issueId === issueId && recordedCommentId
+        ? [recordedCommentId, ...queuedCommentIdsFromWakePayload(recordedPayload)] : [];
+    }));
+    if (commentIds.some(id => !recordedCommentIds.has(id))) return null;
     const [deferred] = await tx.update(agentWakeupRequests).set({
       status: "deferred_issue_execution", runId: null, claimedAt: null, finishedAt: null, error: null,
       payload: withQueuedCommentIdsInWakePayload({ ...payload, _paperclipWakeContext: context,
