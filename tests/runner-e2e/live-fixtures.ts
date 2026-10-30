@@ -1,6 +1,6 @@
 import { CHAT_SETUP_HEALTH_SUITE } from "./chat-setup-health.js";
 import { isEvalRemoteOrigin } from "./eval-remote-gateway.js";
-import type { AiConnectionBinding } from "../../packages/shared/src/ai-connections.js";
+import { aiConnectionBindingSchema, type AiConnectionBinding } from "../../packages/shared/src/ai-connections.js";
 import { verifyInstalledDaytonaPlugin } from "./installed-daytona-plugin.js";
 import { NATIVE_COMPLETION_BUDGET_CENTS } from "./native-completion-defaults.js";
 import path from "node:path";
@@ -280,6 +280,10 @@ export async function setupLiveFixtures(input: {
   });
 
   const managedHiring = isManagedHiringCase(execution.suite.id, execution.task.id);
+  const validationController = execution.id === "chat-features.runner-opencode.local.runs-adapters.validate-hire"
+    && execution.profile.id === "runner-opencode" && execution.profile.provider === "opencode"
+    && execution.profile.model === "openrouter/deepseek/deepseek-v4.1-flash-1017"
+    && execution.profile.credential === "OPENROUTER_API_KEY" && execution.environment.id === "local";
   const savedCopilot = execution.profile.qualificationCandidate === "copilot";
   const gatewayUrl = process.env.PAPERCLIP_E2E_GATEWAY_BASE_URL;
   const gatewayToken = process.env.PAPERCLIP_E2E_GATEWAY_TOKEN;
@@ -287,7 +291,7 @@ export async function setupLiveFixtures(input: {
   if (budgetedGateway && (!gatewayUrl || !gatewayToken || !(execution.environment.id === "local" ? /^http:\/\/127\.0\.0\.1:[0-9]+$/.test(gatewayUrl)
         : isEvalRemoteOrigin(gatewayUrl) && gatewayUrl === process.env.PAPERCLIP_E2E_REMOTE_GATEWAY_ORIGIN)
       || !["local", "daytona"].includes(execution.environment.id) || !["core-compatibility", "feedback-persistence"].includes(execution.suite.id))) throw new Error("Unqualified fixture gateway route");
-  if (managedHiring || savedCopilot || budgetedGateway) {
+  if (managedHiring || savedCopilot || budgetedGateway || validationController) {
     registry.register<ManagedAccountFixture>({
       id: "ai-connection",
       dependencies: ["company", ...(savedCopilot ? ["environment"] : [])],
@@ -319,7 +323,9 @@ export async function setupLiveFixtures(input: {
           connectionId: account.connectionId,
           binding: budgetedGateway
             ? { provider, method: "api_key", mode: "shared", connectionId: account.connectionId, grantId: account.grantId }
-            : { provider, method: "api_key", mode: "responsible_user" },
+            : validationController
+              ? aiConnectionBindingSchema.parse({ provider, method: "api_key", mode: "delegated", connectionId: account.connectionId, grantId: account.grantId })
+              : { provider, method: "api_key", mode: "responsible_user" },
         };
       },
     });
@@ -332,7 +338,7 @@ export async function setupLiveFixtures(input: {
       "secrets",
       "environment",
       ...((grokSubscription || codexSubscription) ? ["subscription-login"] : []),
-      ...(managedHiring || savedCopilot || budgetedGateway ? ["ai-connection"] : []),
+      ...(managedHiring || savedCopilot || budgetedGateway || validationController ? ["ai-connection"] : []),
     ],
     async setup(resolved) {
       const company = value<CompanyRecord>(resolved, "company");
@@ -385,7 +391,7 @@ export async function setupLiveFixtures(input: {
           heartbeat: { ...((runtimeConfig.heartbeat ?? {}) as Record<string, unknown>),
             enabled: false, maxConcurrentRuns: 1, maxDailyRuns: 1, maxDailyCostCents: CASE_RECEIPT_BUDGET_CENTS } };
       }
-      if (managedHiring || savedCopilot || budgetedGateway) {
+      if (managedHiring || savedCopilot || budgetedGateway || validationController) {
         const account = value<ManagedAccountFixture>(resolved, "ai-connection");
         const config = agent.adapterConfig as Record<string, unknown>;
         if (budgetedGateway && execution.environment.id === "daytona") config.helloProbeTimeoutSec = 300;

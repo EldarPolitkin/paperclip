@@ -473,3 +473,49 @@ describe("managed setup runtime cost coverage", () => {
     expect(incomplete.leaseCount).toBe(3);
   });
 });
+
+
+it.each([true,false])("selected validation primary fixture binding and real setup composition (selected=%s)",async selected=>{
+ const {createAgentSchema}=await import("../../packages/shared/src/validators/agent.js");
+ const {runtimeClaudeValidationCases}=await import("./chat-catalog-domains/runtime-claude-validation.js");
+ const companyId="11111111-1111-4111-8111-111111111111",environmentId="22222222-2222-4222-8222-222222222222",leadId="33333333-3333-4333-8333-333333333333";
+ const connectionIds=["44444444-4444-4444-8444-444444444444","55555555-5555-4555-8555-555555555555"],grantIds=["66666666-6666-4666-8666-666666666666","77777777-7777-4777-8777-777777777777"];
+ const execution=runnerMatrix.find(e=>e.id===`chat-features.runner-opencode.local.${selected?"runs-adapters.validate-hire":"teams.configure-team"}`)!;
+ const order:string[]=[],accounts:Array<Record<string,unknown>>=[];let lead:any,target:any,primaryBody:any;
+ const api={baseURL:"http://fixture.invalid",async get(url:string){
+   if(url.endsWith("/environments?driver=local"))return[{id:environmentId,driver:"local"}];
+   if(url===`/api/environments/${environmentId}`)return{id:environmentId,driver:"local",status:"active"};
+   if(url===`/api/agents/${leadId}`)return{...lead,status:"idle",lifecycleState:"ready",lifecycleHolds:[],pauseReason:null};
+   if(target&&url===`/api/agents/${target.id}`)return target;
+   if(url.endsWith("/ai-connections"))return{connections:accounts};
+   if(url.endsWith("/me/user-secrets"))return[{definition:{id:"definition",companyId,key:`ai_${grantIds[1]!.replaceAll("-","_")}`},secret:{id:"slot",companyId,userSecretDefinitionId:"definition",scope:"user",status:"active",ownerUserId:"owner"}}];
+   throw new Error("Unexpected fixture public read");
+ },async post(url:string,body:any){
+   if(url==="/api/companies")return{id:companyId,name:"Synthetic company"};
+   expect(url).toBe(`/api/companies/${companyId}/agents`);
+   const parsed=createAgentSchema.parse(body);
+   if(body.setupId){order.push("target-create");target={...parsed,id:body.setupId,companyId,status:"paused",lifecycleState:"paused",pauseReason:"setup",lifecycleHolds:["setup"]};return target;}
+   order.push("primary-create");primaryBody=parsed;lead={...parsed,id:leadId,companyId,status:"paused",lifecycleState:"verifying",lifecycleHolds:[],pauseReason:null};return lead;
+ },async postSensitive(url:string,body:any){
+   if(url.endsWith("/secrets"))return{id:"88888888-8888-4888-8888-888888888888"};
+   if(url.endsWith("/ai-connections")){const n=accounts.length;expect(body).toMatchObject({provider:"openrouter",method:"api_key",ownership:"personal",apiKey:"synthetic-key",allAgents:false,agentIds:[]});order.push(n===0?"primary-account":"target-account");accounts.push({id:connectionIds[n],grantId:grantIds[n],provider:"openrouter",status:"connected",ownership:"personal",ownerUserId:"owner"});return{connectionId:connectionIds[n],grantId:grantIds[n]};}
+   if(url.endsWith("/rotate")){expect(url).toContain("/slot/");order.push("target-rotate");return{};}
+   if(url.endsWith("/keys"))return{id:"probe",token:"synthetic-permission-token"};
+   throw new Error("Unexpected sensitive fixture write");
+ },async getRunObservation(){return[];}} as unknown as RunnerApi;
+ vi.stubGlobal("fetch",vi.fn(async(url:string|URL)=>{expect(String(url)).toMatch(new RegExp(`/api/agents/[^/]+$`));return new Response(null,{status:200});}));
+ let fixtures:Awaited<ReturnType<typeof setupLiveFixtures>>|undefined;
+ try{
+   fixtures=await setupLiveFixtures({api,execution,executionNonce:"nonce",workspacePath:"/synthetic/workspace",credentials:{OPENROUTER_API_KEY:"synthetic-key"}});
+   expect(primaryBody).not.toHaveProperty("setupId");expect(primaryBody).not.toHaveProperty("status");expect(primaryBody).not.toHaveProperty("pauseReason");expect(primaryBody).not.toHaveProperty("lifecycleHolds");
+   expect(primaryBody.runtimeConfig.heartbeat.enabled).toBe(false);expect(primaryBody.adapterConfig.timeoutSec).toBe(0);
+   if(!selected){expect(order).toEqual(["primary-create"]);expect(primaryBody.runtimeConfig.aiConnection).toBeUndefined();expect(primaryBody.adapterConfig.env.OPENROUTER_API_KEY.type).toBe("secret_ref");return;}
+   expect(order).toEqual(["primary-account","primary-create"]);
+   expect(primaryBody.runtimeConfig.aiConnection).toEqual({provider:"openrouter",method:"api_key",mode:"delegated",connectionId:connectionIds[0],grantId:grantIds[0]});expect(primaryBody.adapterConfig.env).toBeUndefined();
+   const ctx={scenario:{id:"runs-adapters.validate-hire"},input:{api,execution,fixtures,privateSecrets:[],privateInputs:{credentials:{OPENROUTER_API_KEY:"synthetic-key"}},workspacePath:"/synthetic/workspace"},allRuns:async()=>[]} as unknown as import("./chat-catalog-contract.js").ChatCatalogContext;
+   const state=await runtimeClaudeValidationCases[0]!.setup(ctx);
+   expect(state).toMatchObject({actualAccountEligible:true,noTargetWorkBeforeQuery:true,controllerBefore:{runtimeConfig:{aiConnection:primaryBody.runtimeConfig.aiConnection}}});
+   expect(order).toEqual(["primary-account","primary-create","target-account","target-create","target-rotate"]);
+   expect(target.runtimeConfig.aiConnection).toMatchObject({mode:"delegated",connectionId:connectionIds[1],grantId:grantIds[1]});expect(target.pauseReason).toBe("setup");
+ }finally{await fixtures?.teardown();vi.unstubAllGlobals();}
+});

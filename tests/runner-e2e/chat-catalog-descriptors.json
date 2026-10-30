@@ -4806,27 +4806,21 @@
   },
   {
     "requiredCredentials": [
-      "ANTHROPIC_API_KEY"
+      "OPENROUTER_API_KEY"
     ],
-    "externalInput": {
-      "provider": "claude",
-      "fields": [
-        "targetRef",
-        "harnessExecutable",
-        "model",
-        "accountBindingRef"
-      ]
-    },
     "scenarioId": "runs-adapters.validate-hire",
     "sourceFiles": [
       "chat-catalog-domains/runtime-claude-validation.ts",
-      "chat-catalog-domains/runtime-claude-private.ts",
-      "chat-catalog-domains/runtime-claude-private-worker.ts",
       "chat-catalog-domains/runtime-private.ts",
       "chat-catalog-domains/runtime-support.ts",
-      "run-observations.ts",
+      "chat-catalog-domains/identity-support.ts",
       "../../server/src/routes/agents.ts",
-      "../../server/src/services/ai-connection-runtime.ts",
+      "../../server/src/services/ai-connections.ts",
+      "../../server/src/services/agent-environment-test.ts",
+      "../../server/src/services/native-runtime/paperclip-runner-tool-authority.ts",
+      "../../server/src/services/native-runtime/runner-api-client.ts",
+      "../../server/src/modules/agent-lifecycle/adapters/records.ts",
+      "../../server/src/services/agent-lifecycle.ts",
       "chat-scenarios/runs-adapters.yaml"
     ],
     "oracleVersion": "paperclip.chat-catalog.runtime.v2",
@@ -4838,7 +4832,7 @@
     "setupPolicy": {
       "readiness": "preserve-scenario",
       "invariantCheckIds": [
-        "saved-eligible-account-with-genuine-auth-failure"
+        "saved-eligible-target-unstarted-on-setup-hold"
       ]
     },
     "modulePath": "./chat-catalog-domains/runtime-claude-validation.js",
