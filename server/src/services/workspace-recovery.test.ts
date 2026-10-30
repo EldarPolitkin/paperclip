@@ -1,11 +1,13 @@
 import { createAdmissionTransactionScope, createWakeAdmissionReader, createWakeAdmissionWriter } from "../modules/wake-queue/adapters/postgres.js";
+import { createAdmitWakeBehindIssueExecution } from "../modules/wake-queue/application/use-cases.js";
+import { filterZombieCoalesceTarget } from "./heartbeat.js";
 import { mergeCoalescedContextSnapshot } from "./heartbeat/run-preparation.js";
 import { recoveryService } from "./recovery/index.js";
 import { inspectWorkspaceSource } from "./workspace-source-inspection.js";
 import { appendHeartbeatRunEvent } from "./heartbeat-run-events.js";
 import { isPreDispatchExecutionWaitVerified } from "./pre-dispatch-execution-wait.js";
 import { heartbeatRunEvents } from "@paperclipai/db";
-import { createHeartbeatQueue } from "./heartbeat/queue.js";
+import { createHeartbeatQueue, shouldDeferFollowupWakeForSameIssue, shouldQueueFollowupForRunningIssueWake } from "./heartbeat/queue.js";
 import { createHeartbeatQueueTestDependencies } from "../__tests__/helpers/heartbeat-queue.js";
 import { recordRequiredWorkspaceRestoreFailure } from "./legacy-execution-recovery.js";
 import { admitExplicitNativeContinuation } from "./explicit-native-continuation.js";
@@ -96,7 +98,7 @@ describe("automatic retained workspace recovery", () => {
     if (priorHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = priorHome;
     if (priorInstance === undefined) delete process.env.PAPERCLIP_INSTANCE_ID; else process.env.PAPERCLIP_INSTANCE_ID = priorInstance;
   });
-  async function seed(mode = "native", nativeDescriptor = true, resourceDisposition: "destroy" | "keep_running" = "destroy", reusable = false) {
+  async function seed(mode = "native", nativeDescriptor = true, resourceDisposition: "destroy" | "keep_running" = "destroy", reusable = false, ephemeral = false) {
     const companyId = randomUUID(), issueId = randomUUID(), agentId = randomUUID(), runId = randomUUID(), actionId: string = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "Workspace recovery", defaultResponsibleUserId: "board", issuePrefix: `R${companyId.slice(0, 6)}` });
     await db.insert(agents).values({ id: agentId, companyId, name: "Worker", adapterType: "paperclip_runner", status: "idle", runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } } });
@@ -113,7 +115,7 @@ describe("automatic retained workspace recovery", () => {
       metadata: { remoteCwd: remote, driver: "sandbox", pluginId: randomUUID(), sandboxProviderPlugin: true, ...(reusable ? { agentId } : {}) } };
     const acquired = reusable ? await environmentService(db).acquireLease({ ...leaseValues, leasePolicy: "reuse_by_environment" }) : null;
     const [lease] = acquired ? await db.select().from(environmentLeases).where(eq(environmentLeases.id, acquired.id))
-      : await db.insert(environmentLeases).values({ ...leaseValues, leasePolicy: "retain_on_failure", status: "released",
+      : await db.insert(environmentLeases).values({ ...leaseValues, leasePolicy: ephemeral ? "ephemeral" : "retain_on_failure", status: "released",
         cleanupStatus: "success", releasedAt: new Date() }).returning();
     const target: AdapterSandboxExecutionTarget = { kind: "remote", transport: "sandbox", providerKey: "test", leaseId: lease.id,
       remoteCwd: remote, timeoutMs: 30_000, sandboxLeaseAcquisition: { outcome: "created", providerLeaseId },
@@ -1432,8 +1434,8 @@ describe("automatic retained workspace recovery", () => {
       await restarted.$client.end();
     }
   }, 30_000);
-  async function queuedResetFixture(nativeDescriptor = true) {
-    const f = await seed("native", nativeDescriptor, "keep_running"), original = await run(f.runId);
+  async function queuedResetFixture(nativeDescriptor = true, ephemeral = false) {
+    const f = await seed("native", nativeDescriptor, "keep_running", false, ephemeral), original = await run(f.runId);
     await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
     await db.delete(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId));
     await db.update(issues).set({ conversationAgentId: original.agentId, conversationUserId: "operator", conversationState: "active", status: "in_progress" }).where(eq(issues.id, f.issueId));
@@ -1499,10 +1501,84 @@ describe("automatic retained workspace recovery", () => {
     return { followup, receipt };
   }
 
-  async function exerciseQueuedReset(nativeDescriptor: boolean, coalesced = false) {
-    const t = await queuedResetFixture(nativeDescriptor);
+  async function ordinaryMixedQueuedFixture(kind: "active" | "deferred" | "deferred-different" | "system-deferred") {
+    const t = await queuedResetFixture(true, kind !== "active"), { f, original, reset, wake, queued, queueDeps, queue, control } = t;
+    await db.update(issues).set({ conversationAgentId: null, conversationUserId: null, conversationState: null,
+      executionRunId: null, executionAgentNameKey: null, executionLockedAt: null }).where(eq(issues.id, f.issueId));
+    await db.update(heartbeatRuns).set({ wakeupRequestId: null }).where(eq(heartbeatRuns.id, queued.id));
+    await db.update(agentWakeupRequests).set({ runId: null }).where(eq(agentWakeupRequests.id, wake.id));
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, queued.id));
+    await db.delete(agentWakeupRequests).where(eq(agentWakeupRequests.id, wake.id));
+    const reader = createWakeAdmissionReader(), sameActor = vi.spyOn(reader, "matchesActiveWakeActor");
+    queueDeps.wakeQueue.createAdmissionTransactionScope.mockImplementation(createAdmissionTransactionScope);
+    queueDeps.wakeQueue.admitWakeBehindIssueExecution.mockImplementation(createAdmitWakeBehindIssueExecution({
+      reader, writer: createWakeAdmissionWriter(), helpers: { filterZombieCoalesceTarget, mergeCoalescedContextSnapshot,
+        shouldDeferFollowupWakeForSameIssue, shouldQueueFollowupForRunningIssueWake },
+    }));
+    queueDeps.liveRunExecutions.has.mockImplementation(id => t.deps.activeRunExecutions.has(id));
+    const stopped = await run(f.runId);
+    if (kind !== "active") {
+      await db.update(heartbeatRuns).set({ status: "running", finishedAt: null, errorCode: null,
+        nativePhase: "running", resultJson: null }).where(eq(heartbeatRuns.id, f.runId));
+      await db.update(nativeRunFinalizations).set({ phase: "running" }).where(eq(nativeRunFinalizations.runId, f.runId));
+      await db.update(issues).set({ executionRunId: f.runId, executionAgentNameKey: "worker", executionLockedAt: new Date() }).where(eq(issues.id, f.issueId));
+    }
+    const enqueue = async (comment: typeof reset) => queue.enqueueWakeup(original.agentId, {
+      source: "automation", triggerDetail: "system", reason: "issue_commented", requestedByActorType: "user", requestedByActorId: comment.authorUserId!,
+      payload: { issueId: f.issueId, commentId: comment.id, mutation: "comment", resumeIntent: true, followUpRequested: true },
+      contextSnapshot: { issueId: f.issueId, taskId: f.issueId, commentId: comment.id, wakeCommentId: comment.id,
+        wakeCommentIds: [comment.id], source: "issue.comment", wakeReason: "issue_commented", resumeIntent: true, followUpRequested: true },
+    });
+    if (kind === "system-deferred") expect(await queue.enqueueWakeup(original.agentId, {
+      source: "automation", triggerDetail: "system", reason: "issue_updated", requestedByActorType: "system", requestedByActorId: "second-user",
+      payload: { issueId: f.issueId, mutation: "update" },
+      contextSnapshot: { issueId: f.issueId, taskId: f.issueId, source: "issue.updated", wakeReason: "issue_updated", forceFreshSession: true },
+    })).toBeNull();
+    const first = await enqueue(reset);
+    const [followup] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId,
+      authorType: "user", authorUserId: "second-user", body: "Please also preserve the second user's input." }).returning();
+    const second = await enqueue(followup);
+    const ids = [reset.id, followup.id];
+    let admitted = first;
+    if (kind === "active") { expect(first?.status).toBe("queued"); expect(second?.id).toBe(first!.id); }
+    else {
+      expect(first).toBeNull(); expect(second).toBeNull();
+      const [pending] = await db.select().from(agentWakeupRequests).where(and(eq(agentWakeupRequests.companyId, f.companyId),
+        eq(agentWakeupRequests.agentId, original.agentId), eq(agentWakeupRequests.status, "deferred_issue_execution")));
+      expect(pending.payload?._paperclipWakeContext).toMatchObject({ wakeCommentIds: ids });
+      expect(pending.requestedByActorType).toBe(kind === "system-deferred" ? "system" : "user");
+      expect(pending.requestedByActorId).toBe(kind === "system-deferred" ? "second-user" : "operator");
+      await db.update(heartbeatRuns).set({ status: "cancelled", nativePhase: "terminal_failure", finishedAt: new Date(),
+        errorCode: stopped.errorCode, resultJson: stopped.resultJson }).where(eq(heartbeatRuns.id, f.runId));
+      await db.update(nativeRunFinalizations).set({ phase: "terminal_failure" }).where(eq(nativeRunFinalizations.runId, f.runId));
+      const [currentLease] = await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.lease.id));
+      const stopping = await prepareSandboxStopAndRetain(db, currentLease);
+      expect(stopping).not.toBeNull();
+      expect(await settleStopOnlyCleanup(db, stopping!, { attemptId: String(stopping!.metadata!.pendingCleanupAttemptId),
+        receipt: { providerLeaseId: f.providerLeaseId, state: "stopped" } })).not.toBeNull();
+      await control.acknowledgeRemoteStop(f.runId, f.companyId);
+      const [last] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId,
+        authorType: "user", authorUserId: kind === "deferred-different" ? "third-user" : "operator", body: "Resume after Stop and preserve all three inputs in their original order." }).returning();
+      expect(last.createdAt.getTime()).toBeGreaterThan((await run(f.runId)).finishedAt!.getTime());
+      ids.push(last.id); admitted = await enqueue(last);
+    }
+    expect(admitted?.status).toBe("queued");
+    const current = await run(admitted!.id);
+    const [claimedWake] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, current.wakeupRequestId!));
+    expect(current.contextSnapshot?.wakeCommentIds).toEqual(ids);
+    expect(sameActor).not.toHaveBeenCalled();
+    expect(queueDeps.wakeQueue.admitWakeBehindIssueExecution.mock.calls.every(([, input]) => input.durableReceipt === undefined)).toBe(true);
+    expect(queueDeps.executeRun).not.toHaveBeenCalled();
+    return { ...t, queued: current, wake: claimedWake, followup, expectedIds: ids, latestAuthor: kind === "deferred-different" ? "third-user" : kind === "active" ? "second-user" : "operator" };
+  }
+
+  async function exerciseQueuedReset(nativeDescriptor: boolean, coalesced = false, ordinary?: "active" | "deferred" | "deferred-different" | "system-deferred") {
+    const mixed = ordinary ? await ordinaryMixedQueuedFixture(ordinary) : null;
+    const t = mixed ?? await queuedResetFixture(nativeDescriptor);
     const { f, original, reset, wake, queued, deps, control, execution, queueDeps, queue } = t;
     const followup = coalesced ? (await coalesceQueuedReset(t)).followup : null;
+    const expectedIds = mixed?.expectedIds ?? (followup ? [reset.id, followup.id] : [reset.id]);
+    const responsible = queued.responsibleUserId;
     try {
       expect(await queue.claimQueuedRun(queued)).toBeNull();
       expect((await run(queued.id)).status).toBe("queued");
@@ -1533,7 +1609,8 @@ describe("automatic retained workspace recovery", () => {
       const admissionEvents = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, queued.id));
       expect(admissionEvents.map(event => event.eventType)).toEqual(["lifecycle"]);
       expect((await run(queued.id)).nextEventSeq).toBe(2);
-      expect((await run(queued.id)).sessionIdBefore).toBe("saved-native-session-before-reset");
+      expect((await run(queued.id)).sessionIdBefore).toBe(queued.sessionIdBefore);
+      expect((await run(queued.id)).responsibleUserId).toBe(responsible);
       const scheduleRecoveryRetry = vi.fn(async (_runId: string) => null);
       const recoveryDependencies = { enqueueWakeup: vi.fn(async () => null), scheduleRecoveryRetry, liveRunExecutions: { has: () => false } };
       const [task] = await db.select().from(issues).where(eq(issues.id, f.issueId));
@@ -1572,7 +1649,8 @@ describe("automatic retained workspace recovery", () => {
       const successors = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, f.companyId),
         sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${f.issueId}`, eq(heartbeatRuns.status, "queued")));
       expect(successors).toHaveLength(1);
-      expect(successors[0].contextSnapshot?.wakeCommentIds).toEqual(followup ? [reset.id, followup.id] : [reset.id]);
+      expect(successors[0].contextSnapshot?.wakeCommentIds).toEqual(expectedIds);
+      if (mixed) expect(deps.enqueueWakeup).toHaveBeenCalledWith(original.agentId, expect.objectContaining({ requestedByActorType: "user", requestedByActorId: mixed.latestAuthor }), wake.id);
       await recover(db);
       expect(scheduleRecoveryRetry).not.toHaveBeenCalledWith(queued.id);
       expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, queued.id))).toHaveLength(0);
@@ -1589,6 +1667,83 @@ describe("automatic retained workspace recovery", () => {
   it("preserves coalesced queued user comments until real native copyback replays the original wake", async () => {
     await exerciseQueuedReset(true, true);
   }, 30_000);
+
+  it("preserves each ordinary mixed-author comment across queued Stop and native copyback", async () => {
+    await exerciseQueuedReset(true, false, "active");
+  }, 30_000);
+
+  it("preserves merged-deferred mixed-author comments across queued Stop and native copyback", async () => {
+    await exerciseQueuedReset(true, false, "deferred");
+  }, 30_000);
+
+  it("preserves mixed-author comments merged into a system-owned deferred carrier across Stop and native copyback", async () => {
+    await exerciseQueuedReset(true, false, "system-deferred");
+  }, 30_000);
+
+  it("preserves mixed-author deferred inputs when the resuming third user differs from the carrier", async () => {
+    await exerciseQueuedReset(true, false, "deferred-different");
+  }, 30_000);
+
+  it.each(["missing_primary", "agent_namespace", "system_namespace", "foreign_link", "foreign_carrier_run", "foreign_receipt_user", "array_only"] as const)("rejects mixed-author queue authority forgery: %s", async fault => {
+    const t = await ordinaryMixedQueuedFixture("system-deferred"), { f, wake, queued, deps, execution, queueDeps, queue, followup } = t;
+    try {
+      await recordRequiredWorkspaceRestoreFailure(db, await run(f.runId), { workspaceRestoreFailure: "restore_failed" }, f.lease);
+      deps.activeRunExecutions.delete(f.runId); execution.finish(); adapterExecutionControls.delete(f.runId);
+      const sourceIds = queued.contextSnapshot!.queuedCommentSourceWakeIds as string[];
+      const [receipt] = await db.select().from(agentWakeupRequests).where(and(eq(agentWakeupRequests.companyId, f.companyId),
+        eq(agentWakeupRequests.status, "coalesced"), eq(agentWakeupRequests.requestedByActorType, "user"),
+        sql`${agentWakeupRequests.payload}->>'commentId' = ${followup.id}`));
+      expect(receipt).toBeDefined();
+      if (fault === "missing_primary") await db.delete(agentWakeupRequests).where(eq(agentWakeupRequests.id, receipt.id));
+      if (fault === "agent_namespace" || fault === "system_namespace") await db.update(agentWakeupRequests).set({ requestedByActorType: fault === "agent_namespace" ? "agent" : "system", requestedByActorId: "second-user" }).where(eq(agentWakeupRequests.id, receipt.id));
+      if (fault === "foreign_link") await db.update(agentWakeupRequests).set({ payload: { ...receipt.payload, coalescedIntoWakeupRequestId: randomUUID() } }).where(eq(agentWakeupRequests.id, receipt.id));
+      if (fault === "foreign_carrier_run") await db.update(agentWakeupRequests).set({ runId: f.runId }).where(eq(agentWakeupRequests.id, sourceIds[0]));
+      if (fault === "foreign_receipt_user") await db.update(agentWakeupRequests).set({ requestedByActorId: "operator" }).where(eq(agentWakeupRequests.id, receipt.id));
+      if (fault === "array_only") {
+        const [injected] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId, authorType: "user", authorUserId: "second-user", body: "An array is not a saved admission receipt." }).returning();
+        await db.update(heartbeatRuns).set({ contextSnapshot: mergeCoalescedContextSnapshot(queued.contextSnapshot,
+          { issueId: f.issueId, wakeReason: "issue_commented", wakeCommentId: injected.id, wakeCommentIds: [injected.id] }, { preserveExistingInteractionContinuation: true }) }).where(eq(heartbeatRuns.id, queued.id));
+        await db.update(agentWakeupRequests).set({ payload: withQueuedCommentIdsInWakePayload(receipt.payload!, [followup.id, injected.id]) }).where(eq(agentWakeupRequests.id, receipt.id));
+      }
+      expect(await queue.claimQueuedRun(await run(queued.id))).toBeNull();
+      const [after] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wake.id));
+      expect(after.status).toBe("skipped");
+      expect(queueDeps.executeRun).not.toHaveBeenCalled(); expect(deps.enqueueWakeup).not.toHaveBeenCalled();
+    } finally { deps.activeRunExecutions.delete(f.runId); execution.finish(); adapterExecutionControls.delete(f.runId); }
+  }, 30_000);
+
+  it("preserves ordinary no-issue deferred merge semantics", async () => {
+    const f = await seed(), original = await run(f.runId), writer = createWakeAdmissionWriter();
+    const [carrier] = await db.insert(agentWakeupRequests).values({ companyId: f.companyId, agentId: original.agentId,
+      source: "automation", status: "deferred_issue_execution", payload: { text: "original" }, requestedByActorType: "system" }).returning();
+    await db.transaction(tx => writer.mergeIntoExistingDeferredWake(createAdmissionTransactionScope(f.companyId, tx as unknown as typeof db), {
+      companyId: f.companyId, existingDeferredWakeId: carrier.id, mergedPayload: { text: "merged" }, nextCoalescedCount: 1,
+      coalescedReceipt: { agentId: original.agentId, source: "automation", triggerDetail: null, reason: null, payload: { text: "saved" }, requestedByActorType: "system", requestedByActorId: null, idempotencyKey: null, runId: null },
+    }));
+    const [after] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, carrier.id));
+    expect(after.payload).toEqual({ text: "merged" });
+    const [receipt] = await db.select().from(agentWakeupRequests).where(and(eq(agentWakeupRequests.companyId, f.companyId), eq(agentWakeupRequests.status, "coalesced")));
+    expect(receipt.payload).toEqual({ text: "saved", coalescedIntoWakeupRequestId: carrier.id });
+  });
+
+  it("rolls back saved primary and carrier overwrite if incoming mixed-author receipt persistence fails", async () => {
+    const f = await seed(), original = await run(f.runId), writer = createWakeAdmissionWriter();
+    const [first] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId, authorType: "user", authorUserId: "operator", body: "First saved input" }).returning();
+    const [second] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId, authorType: "user", authorUserId: "second-user", body: "Second saved input" }).returning();
+    const [carrier] = await db.insert(agentWakeupRequests).values({ companyId: f.companyId, agentId: original.agentId,
+      source: "automation", status: "deferred_issue_execution", payload: { issueId: f.issueId, commentId: first.id }, requestedByActorType: "user", requestedByActorId: "operator" }).returning();
+    const merge = (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], id?: string) => writer.mergeIntoExistingDeferredWake(createAdmissionTransactionScope(f.companyId, tx as unknown as typeof db), {
+      companyId: f.companyId, existingDeferredWakeId: carrier.id, mergedPayload: { issueId: f.issueId, commentId: second.id }, nextCoalescedCount: 1,
+      coalescedReceipt: { ...(id ? { id } : {}), agentId: original.agentId, source: "automation", triggerDetail: null, reason: "issue_commented", payload: { issueId: f.issueId, commentId: second.id, coalescedIntoWakeupRequestId: "untrusted" }, requestedByActorType: "user", requestedByActorId: "second-user", idempotencyKey: null, runId: null },
+    });
+    await expect(db.transaction(tx => merge(tx, carrier.id))).rejects.toThrow();
+    expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, f.companyId)))).toEqual([carrier]);
+    await db.transaction(tx => merge(tx)); await db.transaction(tx => merge(tx));
+    const proofs = await db.select().from(agentWakeupRequests).where(and(eq(agentWakeupRequests.companyId, f.companyId), eq(agentWakeupRequests.status, "coalesced")));
+    expect(proofs.filter(receipt => receipt.payload?.commentId === first.id)).toHaveLength(1);
+    expect(proofs.every(receipt => receipt.payload?.coalescedIntoWakeupRequestId === carrier.id)).toBe(true);
+    expect(proofs.find(receipt => receipt.payload?.commentId === first.id)?.requestedByActorId).toBe("operator");
+  });
 
   it.each(["missing_receipt", "wrong_receipt_run", "wrong_receipt_agent", "wrong_receipt_company", "wrong_receipt_user", "wrong_receipt_issue", "terminal_receipt", "foreign_comment_user", "deleted_followup", "unrecorded_comment", "unrecorded_original"] as const)("keeps coalesced Stop recovery input closed without saved receipt authority: %s", async fault => {
     const t = await queuedResetFixture(), { f, wake, queued, deps, execution, queueDeps, queue } = t;
