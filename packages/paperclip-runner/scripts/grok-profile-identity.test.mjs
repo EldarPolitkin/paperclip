@@ -50,7 +50,7 @@ test("the generator cannot overwrite a versioned identity after source changes",
   const kimiIdentity = JSON.parse(readFileSync(join(root, kimiFixture), "utf8"));
   try {
     for (const path of new Set([...GROK_PROFILE_SOURCE_FILES, ...Object.keys(kimiIdentity.declaration.sources).map(path => prefix + path), kimiFixture, ...[
-      "acpx-profiles.json", "cursor-distributions.json", "cursor-contract.json", "package.json",
+      "acpx-profiles.json", "cursor-distributions.json", "cursor-contract.json", "antigravity-distributions.json", "package.json",
       "scripts/grok-profile-identity.mjs", "scripts/kimi-profile-identity.mjs", "scripts/generate-acpx-profiles.mjs",
       `test/fixtures/copilot-profile-v${manifest.profiles.copilot.agentProfileVersion}-identity.json`,
       `test-fixtures/pi-acp/profile-v${manifest.profiles.pi.agentProfileVersion}-identity.json`,
@@ -79,11 +79,10 @@ test("the generator cannot overwrite a versioned identity after source changes",
 test("profile 14 preserves published 12 and retained 13 while binding the reconciled backend", () => {
   const published = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v12-identity.json"));
   assert.equal(createHash("sha256").update(published).digest("hex"), "f43ac83f80fde04d8f184529502d3efc0df1b870d0ac8f863a183ae48eb6b004");
-  const bytes = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v13-identity.json"));
+  const bytes = readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v13-kimi-historical-identity.json"));
   assert.equal(createHash("sha256").update(bytes).digest("hex"), "ce76000eddf14e0c6caca659f40536c986e3101a72babc25c136bfbb0eee6ed5");
   const prior = JSON.parse(bytes.toString("utf8"));
-  const current = JSON.parse(readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v14-identity.json"), "utf8"));
-  assert.deepEqual(current, grokProfileIdentity(root));
+  const current = JSON.parse(readFileSync(join(root, "packages/paperclip-runner/test/fixtures/grok-profile-v14-kimi-historical-identity.json"), "utf8"));
   assert.equal(current.declaration.agentProfileVersion, 14);
   assert.notEqual(current.commandDigest, prior.commandDigest);
   assert.deepEqual(Object.keys(current.declaration.sources).filter(path => current.declaration.sources[path] !== prior.declaration.sources[path]), [

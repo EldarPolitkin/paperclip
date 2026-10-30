@@ -1,3 +1,4 @@
+import { bindAcpxCandidateAdmission, type AcpxCandidateAdmission } from "./candidate-admission.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KIMI_DISTRIBUTION_CLOSURE_SHA256, KIMI_NODE_DISTRIBUTIONS, KIMI_NODE_VERSION, KIMI_RUNTIME_VERSION } from "./kimi-closure-pins.js";
 import { KimiMetadataProbeError } from "./kimi-models.js";
@@ -11,6 +12,11 @@ import { kimiMetadataProbeNodeDigest, probeKimiMetadata, validateKimiMetadata } 
 const model = "selected-model";
 const apiKey = "selected-secret-canary";
 const target = `${process.platform}-${process.arch}` as keyof typeof KIMI_DISTRIBUTION_CLOSURE_SHA256;
+const admission = () => bindAcpxCandidateAdmission({ schema: "paperclip.acpx-candidate-admission.v1", companyId: "metadata-company", agent: "kimi", model,
+  profileDigest: QUALIFIED_ACPX_PROFILES.kimi.commandDigest,
+  nativeClosureDigest: `sha256:${KIMI_DISTRIBUTION_CLOSURE_SHA256[target]}`,
+  platform: process.platform, architecture: process.arch, expiresAt: Date.now() + 60_000 } as AcpxCandidateAdmission,
+  { runId: "metadata-operation", normalizedSessionId: "metadata-session" });
 const receipt = () => ({ schema: "paperclip.kimi.metadata.v1", status: "verified", version: KIMI_RUNTIME_VERSION,
   nodeVersion: KIMI_NODE_VERSION, profileDigest: QUALIFIED_ACPX_PROFILES.kimi.commandDigest, target,
   closureDigest: `sha256:${KIMI_DISTRIBUTION_CLOSURE_SHA256[target]}`, model, contextLength: 1048576, promptSent: false });
@@ -32,7 +38,7 @@ describe("Kimi setup metadata admission", () => {
     mocks.metadata.mockImplementation(async () => { order.push("authenticate"); return { model, contextLength: 1048576 }; });
     vi.stubEnv("KIMI_API_KEY", "unselected-ambient-secret");
     vi.stubEnv("KIMI_MODEL_DEFAULT", "unselected-model");
-    await expect(probeKimiMetadata(model, apiKey)).resolves.toEqual(receipt());
+    await expect(probeKimiMetadata(model, apiKey, admission())).resolves.toEqual(receipt());
     expect(order).toEqual(["verify-closure", "cleanup", "authenticate"]);
     expect(mocks.installation).toHaveBeenCalledWith(expect.objectContaining({
       agent: "kimi", commandDigest: QUALIFIED_ACPX_PROFILES.kimi.commandDigest,
@@ -46,10 +52,37 @@ describe("Kimi setup metadata admission", () => {
     if (stage === "metadata") mocks.installation.mockRejectedValue(error);
     if (stage === "closure") mocks.open.mockRejectedValue(error);
     if (stage === "cleanup") mocks.close.mockRejectedValue(error);
-    const result = await probeKimiMetadata(model, apiKey);
+    const result = await probeKimiMetadata(model, apiKey, admission());
     expect(result).toMatchObject({ status: "failed", code: "KIMI_INSTALLATION_INVALID", promptSent: false });
     expect(JSON.stringify(result)).not.toContain(apiKey);
     expect(mocks.metadata).not.toHaveBeenCalled();
+  });
+
+  it("refuses pending metadata work without exact trusted startup authority before files or HTTP", async () => {
+    expect(await probeKimiMetadata(model, apiKey)).toMatchObject({ status: "failed", code: "KIMI_QUALIFICATION_REQUIRED", promptSent: false });
+    const valid = admission();
+    for (const altered of [{ ...valid, model: "other-model" }, { ...valid, agent: "antigravity" },
+      { ...valid, expiresAt: 0 }, { ...valid, profileDigest: `sha256:${"f".repeat(64)}` },
+      { ...valid, nativeClosureDigest: `sha256:${"e".repeat(64)}` }, { ...valid, extra: true }]) {
+      expect(await probeKimiMetadata(model, apiKey, altered as typeof valid)).toMatchObject({ code: "KIMI_QUALIFICATION_REQUIRED" });
+    }
+    expect(mocks.installation).not.toHaveBeenCalled(); expect(mocks.metadata).not.toHaveBeenCalled();
+  });
+
+  it("requires no operator grant after canonical release metadata admits Kimi", async () => {
+    vi.resetModules();
+    vi.doMock("./generated-profiles.js", async original => {
+      const data = await original<typeof import("./generated-profiles.js")>();
+      const current = structuredClone(data.QUALIFIED_ACPX_PROFILE_DATA);
+      const released = { ...current.kimi } as Record<string, unknown>;
+      delete released.qualificationStatus;
+      return { ...data, QUALIFIED_ACPX_PROFILE_DATA: { ...current, kimi: released } };
+    });
+    try {
+      const released = await import("./kimi-metadata-probe.js");
+      expect(await released.probeKimiMetadata(model, apiKey)).toMatchObject({ status: "verified", model, promptSent: false });
+      expect(mocks.metadata).toHaveBeenCalledExactlyOnceWith(model, apiKey);
+    } finally { vi.doUnmock("./generated-profiles.js"); vi.resetModules(); }
   });
 
   it("requires an explicit bounded credential and exact model before installation or HTTP work", async () => {
@@ -66,9 +99,9 @@ describe("Kimi setup metadata admission", () => {
 
   it.each(["KIMI_AUTH_REJECTED", "KIMI_MODEL_UNAVAILABLE", "KIMI_METADATA_TIMEOUT", "KIMI_METADATA_INVALID", "KIMI_PROVIDER_ERROR"] as const)("preserves the canonical %s failure without provider text", async code => {
     mocks.metadata.mockRejectedValue(new KimiMetadataProbeError(code));
-    expect(await probeKimiMetadata(model, apiKey)).toMatchObject({ status: "failed", code, promptSent: false });
+    expect(await probeKimiMetadata(model, apiKey, admission())).toMatchObject({ status: "failed", code, promptSent: false });
     mocks.metadata.mockRejectedValue(new Error(`provider failure ${apiKey}`));
-    const result = await probeKimiMetadata(model, apiKey);
+    const result = await probeKimiMetadata(model, apiKey, admission());
     expect(result).toMatchObject({ status: "failed", code: "KIMI_REQUEST_FAILED", promptSent: false });
     expect(JSON.stringify(result)).not.toContain(apiKey);
   });

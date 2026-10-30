@@ -5,14 +5,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const KIMI_PROFILE_VERSION = 11;
+export const KIMI_PROFILE_VERSION = 13;
 const sources = [
   "scripts/patch-kimi-runtime.mjs", "scripts/kimi-instructions-runtime.mjs",
   "scripts/materialize-kimi-distribution.mjs", "scripts/provision-kimi.mjs",
   "scripts/kimi-distribution/package.json", "scripts/kimi-distribution/package-lock.json",
   "src/drivers/acpx/kimi-closure-pins.ts", "src/drivers/acpx/kimi-config.ts",
   "src/drivers/acpx/kimi-installation.ts", "src/drivers/acpx/kimi-instructions.ts",
-  "src/drivers/acpx/instruction-admission.ts", "src/drivers/acpx/kimi-runtime-files.ts",
+  "src/drivers/acpx/session-context-admission.ts", "src/drivers/acpx/kimi-runtime-files.ts",
   "src/configured-environment.ts", "src/drivers/acpx/environment.ts",
   "src/drivers/acpx/codex-runtime-adapter.ts", "src/drivers/acpx/runtime-host.ts",
   "src/drivers/acpx/runtime-sandbox.ts", "src/cli/acpx-runtime-sidecar.ts",
@@ -24,6 +24,30 @@ const sources = [
   "src/drivers/acpx/safe-locations.ts", "src/drivers/acpx/generated-sidecar-contract.ts",
   "src/semantic-tools/redaction.ts",
   "runner/crates/runner-core/src/acpx_provider_state.rs",
+  "src/drivers/acpx/candidate-admission.ts",
+  "src/drivers/acpx/qualified-profiles.ts",
+  "src/drivers/acpx/profile-installation.ts",
+  "src/drivers/acpx/driver-profile.ts",
+  "src/live/runnerd-codex-transport.ts",
+  "runner/crates/runner-core/src/acpx_candidate_admission.rs",
+  "runner/crates/runner-core/src/acpx_provider_backend.rs",
+  "runner/crates/runner-core/src/acpx_provider_session.rs",
+  "runner/crates/runner-core/src/acpx_sidecar_transport.rs",
+  "runner/crates/runner-core/src/native_provider_backend.rs",
+  "runner/crates/runner-core/src/durable/runner.rs",
+  "runner/crates/runner-core/src/durable/mod.rs",
+  "src/provider-events.ts",
+  "src/native-session-runtime.ts",
+  "src/control-plane/durable-prp-control-plane.ts",
+  "src/drivers/codex/codex-harness-session.ts",
+  "src/drivers/codex/codex-session-notifications.ts",
+  "src/drivers/codex/codex-session-state.ts",
+  "runner/crates/runner-core/src/provider_backend.rs",
+  "runner/crates/runner-core/src/provider_bridge.rs",
+  "runner/crates/runner-core/src/provider_events.rs",
+  "runner/crates/runner-core/src/acpx_event_scope.rs",
+  "runner/crates/runner-core/src/acpx_event_payload.rs",
+  "scripts/generate-acpx-profiles.mjs",
 ];
 const canonical = value => value && typeof value === "object"
   ? Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
