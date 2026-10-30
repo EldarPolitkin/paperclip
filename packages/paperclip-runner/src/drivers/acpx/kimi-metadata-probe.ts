@@ -1,3 +1,4 @@
+import { assertAcpxExecutionAdmission, type AcpxCandidateStartupAdmission } from "./candidate-admission.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
@@ -9,7 +10,7 @@ import { resolveQualifiedAcpxProfile, QUALIFIED_ACPX_PROFILES } from "./qualifie
 
 const SCHEMA = "paperclip.kimi.metadata.v1";
 const providerCodes = ["KIMI_AUTH_REQUIRED", "KIMI_AUTH_REJECTED", "KIMI_MODEL_UNAVAILABLE", "KIMI_METADATA_TIMEOUT", "KIMI_METADATA_INVALID", "KIMI_PROVIDER_ERROR"] as const;
-type FailureCode = KimiMetadataProbeErrorCode | "KIMI_INSTALLATION_INVALID" | "KIMI_REQUEST_FAILED";
+type FailureCode = KimiMetadataProbeErrorCode | "KIMI_INSTALLATION_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_QUALIFICATION_REQUIRED";
 export type KimiMetadataResult = {
   schema: typeof SCHEMA; status: "verified"; version: typeof KIMI_RUNTIME_VERSION;
   nodeVersion: typeof KIMI_NODE_VERSION; profileDigest: string; target: string;
@@ -17,20 +18,25 @@ export type KimiMetadataResult = {
 } | { schema: typeof SCHEMA; status: "failed"; code: FailureCode; message: string; promptSent: false };
 
 function failed(code: FailureCode): Extract<KimiMetadataResult, { status: "failed" }> {
-  const message = code === "KIMI_INSTALLATION_INVALID"
+  const message = code === "KIMI_QUALIFICATION_REQUIRED"
+    ? "Kimi Code qualification is pending; metadata verification requires trusted operator admission."
+    : code === "KIMI_INSTALLATION_INVALID"
     ? "Install the current verified Kimi Code runtime in this execution environment."
     : code === "KIMI_REQUEST_FAILED" ? "Kimi Code metadata verification failed."
       : new KimiMetadataProbeError(code).message;
   return { schema: SCHEMA, status: "failed", code, message, promptSent: false };
 }
 
-export async function probeKimiMetadata(model: string, apiKey: string): Promise<KimiMetadataResult> {
+export async function probeKimiMetadata(model: string, apiKey: string, candidateAdmission?: AcpxCandidateStartupAdmission): Promise<KimiMetadataResult> {
   if (typeof apiKey !== "string" || !apiKey.trim() || /[\0\r\n]/.test(apiKey) || Buffer.byteLength(apiKey) > 16 * 1024) return failed("KIMI_AUTH_REQUIRED");
   if (typeof model !== "string" || !model.trim() || model.includes("\0") || Buffer.byteLength(model) > 512 || Buffer.from(model).toString("utf8") !== model) return failed("KIMI_MODEL_UNAVAILABLE");
   const target = `${process.platform}-${process.arch}`;
   if (!Object.hasOwn(KIMI_DISTRIBUTION_CLOSURE_SHA256, target)) return failed("KIMI_INSTALLATION_INVALID");
+  const profile = resolveQualifiedAcpxProfile("kimi", model);
+  try { assertAcpxExecutionAdmission(profile, candidateAdmission); }
+  catch { return failed("KIMI_QUALIFICATION_REQUIRED"); }
   try {
-    const installation = await verifyKimiInstallation(resolveQualifiedAcpxProfile("kimi", model));
+    const installation = await verifyKimiInstallation(profile);
     const lease = await installation.openCommand();
     await lease.close();
   } catch { return failed("KIMI_INSTALLATION_INVALID"); }
@@ -49,7 +55,7 @@ export function validateKimiMetadata(value: unknown, model: string): KimiMetadat
   if (row.schema !== SCHEMA || row.promptSent !== false) return failed("KIMI_REQUEST_FAILED");
   if (row.status === "failed") {
     if (Object.keys(row).some(key => !["schema", "status", "code", "message", "promptSent"].includes(key))
-      || typeof row.code !== "string" || ![...providerCodes, "KIMI_INSTALLATION_INVALID", "KIMI_REQUEST_FAILED"].includes(row.code)) return failed("KIMI_REQUEST_FAILED");
+      || typeof row.code !== "string" || ![...providerCodes, "KIMI_INSTALLATION_INVALID", "KIMI_REQUEST_FAILED", "KIMI_QUALIFICATION_REQUIRED"].includes(row.code)) return failed("KIMI_REQUEST_FAILED");
     return failed(row.code as FailureCode);
   }
   if (row.status !== "verified" || Object.keys(row).some(key => !["schema", "status", "version", "nodeVersion", "profileDigest", "target", "closureDigest", "model", "contextLength", "promptSent"].includes(key))) return failed("KIMI_REQUEST_FAILED");

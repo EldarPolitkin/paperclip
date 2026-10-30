@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -41,7 +41,7 @@ test("Kimi metadata CLI is self-contained and rejects incomplete assets without 
   await writeFile(preload, `
     const assert = require("node:assert/strict");
     process.nextTick(() => {
-      for (const name of ["KIMI_API_KEY", "PAPERCLIP_KIMI_PROBE_MODEL", "KIMI_MODEL_DEFAULT", "HOME", "HTTPS_PROXY", "NODE_OPTIONS", "NODE_PATH", "ANTHROPIC_API_KEY"]) {
+      for (const name of ["KIMI_API_KEY", "PAPERCLIP_KIMI_PROBE_MODEL", "KIMI_MODEL_DEFAULT", "HOME", "HTTPS_PROXY", "NODE_OPTIONS", "NODE_PATH", "ANTHROPIC_API_KEY", "PAPERCLIP_ACPX_CANDIDATE_ADMISSION"]) {
         assert.equal(process.env[name], undefined, name);
       }
       assert.equal(process.env.PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT, ${JSON.stringify(root)});
@@ -57,8 +57,15 @@ test("Kimi metadata CLI is self-contained and rejects incomplete assets without 
   `);
   const pinnedNode = join(packageRoot, "provider-assets/kimi", `${process.platform}-${process.arch}`, "runtime/node/bin/node");
   const node = await stat(pinnedNode).then(() => pinnedNode, () => process.execPath);
+  const profile = JSON.parse(await readFile(join(packageRoot, "acpx-profiles.json"), "utf8")).profiles.kimi;
+  const { KIMI_DISTRIBUTION_CLOSURE_SHA256 } = await import(new URL("../src/drivers/acpx/kimi-closure-pins.ts", import.meta.url));
+  const admission = { schema: "paperclip.acpx-candidate-admission.v1", companyId: "metadata-cli-company", agent: "kimi", model: "selected-model",
+    profileDigest: profile.commandDigest, nativeClosureDigest: `sha256:${KIMI_DISTRIBUTION_CLOSURE_SHA256[`${process.platform}-${process.arch}`]}`,
+    platform: process.platform, architecture: process.arch, expiresAt: Date.now() + 60_000,
+    runId: "metadata-operation", normalizedSessionId: "metadata-session" };
   const child = spawnSync(node, ["--require", preload, entry], {
     env: { KIMI_API_KEY: "selected-secret-canary", PAPERCLIP_KIMI_PROBE_MODEL: "selected-model",
+      PAPERCLIP_ACPX_CANDIDATE_ADMISSION: JSON.stringify(admission),
       PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT: root, PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST: manifest,
       KIMI_MODEL_DEFAULT: "unselected-model", HOME: "/private/unselected-home", HTTPS_PROXY: "http://127.0.0.1:9",
       ANTHROPIC_API_KEY: "unselected-secret-canary", NODE_OPTIONS: "", NODE_PATH: "/unselected-module-path" },
@@ -72,6 +79,17 @@ test("Kimi metadata CLI is self-contained and rejects incomplete assets without 
     code: "KIMI_INSTALLATION_INVALID", message: process.versions.node === "24.21.0" || node === pinnedNode
       ? "Install the current verified Kimi Code runtime in this execution environment."
       : "Kimi metadata verification requires the pinned Node runtime.", promptSent: false });
+
+  const unqualified = spawnSync(node, ["--require", preload, entry], {
+    env: { KIMI_API_KEY: "selected-secret-canary", PAPERCLIP_KIMI_PROBE_MODEL: "selected-model",
+      PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT: root, PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST: manifest },
+    encoding: "utf8", timeout: 10_000,
+  });
+  assert.ifError(unqualified.error); assert.equal(unqualified.status, 1);
+  if (process.versions.node === "24.21.0" || node === pinnedNode) {
+    assert.equal(JSON.parse(unqualified.stdout).code, "KIMI_QUALIFICATION_REQUIRED");
+  }
+  assert.doesNotMatch(unqualified.stdout + unqualified.stderr, /UNEXPECTED_NETWORK_OR_CHILD|selected-secret-canary/);
 
   for (const layout of ["runner", "server"]) {
     const packageDirectory = join(root, layout);

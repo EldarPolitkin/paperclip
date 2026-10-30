@@ -117,6 +117,7 @@ describe("ACPX launch environment", () => {
     ["pi", "OPENROUTER_API_KEY"], ["cursor", "CURSOR_API_KEY"],
     ["cursor", "CURSOR_AUTH_TOKEN"], ["copilot", "COPILOT_GITHUB_TOKEN"],
     ["kimi", "KIMI_API_KEY"],
+    ["antigravity", "GEMINI_API_KEY"],
   ] as const)("requires an explicit %s credential binding for %s", (agent, name) => {
     vi.stubEnv(name, "ambient-secret");
     expect(createSanitizedAcpxSpawnInput(undefined, agent).env[name]).toBeUndefined();
@@ -162,6 +163,7 @@ describe("ACPX launch environment", () => {
     ["pi", "OPENROUTER_API_KEY"], ["cursor", "CURSOR_API_KEY"],
     ["cursor", "CURSOR_AUTH_TOKEN"], ["copilot", "COPILOT_GITHUB_TOKEN"],
     ["kimi", "KIMI_API_KEY"],
+    ["antigravity", "GEMINI_API_KEY"],
   ] as const)("admits only session-bound %s sidecar credentials for %s", (agent, name) => {
     const source = { [name]: "task-secret" };
     const binding = createAcpxCredentialBinding(source, agent, "session-1");

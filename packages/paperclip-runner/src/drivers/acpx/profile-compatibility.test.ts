@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { QUALIFIED_ACPX_PROFILE_DATA } from "./generated-profiles.js";
@@ -5,6 +6,9 @@ import { isSupportedAcpxProfileVersion } from "./profile-compatibility.js";
 
 describe("historical ACPX profile decoding", () => {
   it("retains each provider's existing revision boundary", () => {
+    expect(isSupportedAcpxProfileVersion("grok", 7)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("pi", 30)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("copilot", 71)).toBe(true);
     expect(isSupportedAcpxProfileVersion("copilot", 17)).toBe(true);
     expect(isSupportedAcpxProfileVersion("pi", 17)).toBe(true);
     expect(isSupportedAcpxProfileVersion("pi", 18)).toBe(true);
@@ -72,5 +76,32 @@ describe("historical ACPX profile decoding", () => {
   });
   it.each(["unknown", "toString", "__proto__"])("rejects unregistered providers: %s", agent => {
     expect(isSupportedAcpxProfileVersion(agent, 1)).toBe(false);
+  });
+});
+
+
+describe("independent historical profile declarations", () => {
+  it("retains both exact source lineages without granting old execution identities", () => {
+    const lineage = JSON.parse(readFileSync(new URL("../../../test/fixtures/profile-history-lineage.json", import.meta.url), "utf8"));
+    expect(lineage.historicalDecodeOnly).toBe(true);
+    expect(lineage.executionRequiresExactCurrentProfile).toBe(true);
+    expect(lineage.records).toHaveLength(10);
+    const variants = new Map<string, Set<string>>();
+    for (const record of lineage.records) {
+      const bytes = readFileSync(new URL(`../../../../../${record.path}`, import.meta.url));
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(record.sha256);
+      const identity = JSON.parse(bytes.toString("utf8"));
+      expect(identity.declaration.agent).toBe(record.agent);
+      expect(identity.declaration.agentProfileVersion).toBe(record.version);
+      expect(identity.commandDigest).toBe(record.commandDigest);
+      expect(record.launchAuthority).toBe(false);
+      expect(isSupportedAcpxProfileVersion(record.agent, record.version)).toBe(true);
+      expect(QUALIFIED_ACPX_PROFILE_DATA[record.agent as keyof typeof QUALIFIED_ACPX_PROFILE_DATA].commandDigest).not.toBe(record.commandDigest);
+      const key = `${record.agent}:${record.version}`;
+      const values = variants.get(key) ?? new Set<string>();
+      values.add(record.commandDigest); variants.set(key, values);
+    }
+    expect(variants.size).toBe(5);
+    for (const values of variants.values()) expect(values.size).toBe(2);
   });
 });
