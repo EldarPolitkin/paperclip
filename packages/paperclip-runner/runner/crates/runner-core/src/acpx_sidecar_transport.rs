@@ -1090,7 +1090,8 @@ mod tests {
                 .env("PAPERCLIP_GITHUB_LAUNCHER_DIR", "/managed")
                 .env("GH_TOKEN", "unbound-secret")
                 .env("PAPERCLIP_GITHUB_BROKER_TOKEN", "unbound-capability")
-                .output().unwrap();
+                .output()
+                .unwrap();
             assert!(
                 output.status.success(),
                 "{}",
@@ -1105,17 +1106,12 @@ mod tests {
             request_timeout: Duration::from_secs(1),
             shutdown_grace: Duration::from_millis(100),
         };
-        let transport = AcpxSidecarTransport::start_for_agent(&config, "claude").unwrap();
-        match transport
-            .process
-            .recv_timeout(Duration::from_secs(2))
+        let mut transport = AcpxSidecarTransport::start_for_agent(&config, "claude").unwrap();
+        let line = transport
+            .receive_stdout_line(Duration::from_secs(2), "managed-helper test")
             .unwrap()
-        {
-            ProcessOutput::Stdout(line) => {
-                assert_eq!(line, "/managed/.bashrc|/managed|/managed|/managed||")
-            }
-            _ => panic!("sidecar did not report its environment"),
-        }
+            .expect("sidecar did not report its environment");
+        assert_eq!(line, "/managed/.bashrc|/managed|/managed|/managed||");
     }
 
     #[test]
