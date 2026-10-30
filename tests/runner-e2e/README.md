@@ -1947,6 +1947,13 @@ same-turn steering are not claimed by these semantic journeys. Daytona cells
 also require the configured immutable runtime image and the existing remote
 prerequisites. Provider/process-loss and unanswered native-permission Stop
 remain separate acceptance gates, not claims of the chat Stop cell.
+The Kimi Stop/reset/resume cell retains all heartbeat rows. It still requires
+exactly three native provider runs and one server-authored `/new` reset. A
+separate pre-dispatch admission wait may be excluded from provider counts only
+with the complete server receipt, no provider authority or events, the same
+saved human `/new`, and exact recovered stopped-source evidence. The final
+reset and fresh native continuation remain required; a cancelled legacy row
+alone cannot qualify. Other chat suites keep their existing accounting.
 
 ```sh
 pnpm test:e2e:runner -- --list --suite kimi-qualification

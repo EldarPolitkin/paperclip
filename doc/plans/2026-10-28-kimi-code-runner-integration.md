@@ -64,7 +64,7 @@ qualification passes. Provider registration does not migrate legacy agents.
 | Human input and Stop | local and Daytona | All pending11 local human-input and Stop journeys passed; Daytona question, Plan and Write Stop passed; remote Stop/new/resume remains | partial |
 | Continuation and child loss | local and Daytona | All pending11 local continuation journeys and authenticated Daytona native worker loss passed; remote Stop/new/resume remains | partial |
 | Installed distribution | macOS arm64 and Linux x64 | Pending11 native closures, Mac binaries and immutable Linux qualification image verified; final normal public-package installation remains | partial |
-| Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; the recovery guard passed 65 module tests and selected assembled controls; selector regressions and targeted typechecks passed; final full checks remain | partial |
+| Regression and repository checks | candidate revision | Prior foundation/product heads passed CI and review; shared recovery and admission controls passed real PostgreSQL owning suites and focused tests; final integrated full checks remain | partial |
 
 Current pending11 totals remain 0 fully passed, 7 partial, 1 unattempted of 8
 gates. The two-environment matrix has nineteen distinct passing case records:
@@ -178,12 +178,37 @@ and normal explicit continuation admission. It proves timely reset eligibility;
 actual browser generation and a fresh native turn still require the final Daytona
 case. No blocker, timeout, grading, schema or polling change is included.
 
-The five shared Core source/test changes are a separate prerequisite,
+The six shared Core source/test changes are a separate prerequisite,
 [#18245](https://github.com/paperclipai/paperclip/pull/18245), based on the frozen
 Runner foundation. Product retains its Kimi plan, UI, fixtures and provider files.
-Integration must preserve the complete intended product tree and prove real
-prerequisite ancestry. The final compiled Core must identify that integrated
-source; earlier Core, native and image identities are retained separately.
+Product contains the real prerequisite ancestry, including queued-input repair
+`5c964f5d3cfd65e493b92c53cfe0c80b0d21f54d`. The final compiled Core must
+identify the integrated product source; earlier Core, native and image identities
+are retained separately.
+
+A further real PostgreSQL control reproduced an already queued `/new` request
+being cancelled before provider admission and its saved wake marked skipped.
+The shared dispatch owner now keeps only that exact current human wake deferred
+inside the cancellation transaction. It requires the canonical no-execution proof,
+matching native preservation action and unfinalized native baseline. The existing
+queued-writer guard orders copyback after that commit. Real copyback and the
+normal callback then adopt the original input once, including concurrent callback
+delivery. Foreign, terminal and unverified requests remain fenced. The unchanged
+production patch passed 164 owning tests; final focused controls, the actual
+stranded-recovery retry discriminator and no-emit validation passed. A saved prior
+session reference remains a hint. The deferred wake prevents a competing automatic
+retry; no new retry policy, queue hook or polling was added.
+
+The extra cancelled admission receipt remains in the raw Product E2E evidence.
+Kimi suite V6 classifies it separately from the three native provider turns and
+the single authored reset. It requires the complete server event receipt and final
+public proof of the human command, stopped source, preservation, authorization,
+reset and fresh native session. Provider counts, deadlines and earlier grades stay
+unchanged. Forty-nine focused controls and narrow typecheck pass. Controlled
+Chromium exercised the prior count failure and corrected full flow; that is
+fixture calibration, not live model acceptance. The nineteen accepted originals
+retain V4/V5. Only the remaining fresh case uses V6, fingerprint
+`f7883fff6c2a5fda14571ef150849e3d2514be036fed941e257276e6b956e5d7`.
 
 Next, complete the one remaining Daytona Stop/new/resume case. The local
 representative remains valid because the additional event behavior requires a
