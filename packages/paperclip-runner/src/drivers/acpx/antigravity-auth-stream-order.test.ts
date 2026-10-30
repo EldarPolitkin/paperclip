@@ -24,7 +24,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
-type Mode = "url-first" | "result-first" | "wrong-url" | "duplicate-url" | "unexpected-prompt" | "retirement-failure" | "credential-failure" | "auth-error";
+type Mode = "url-first" | "result-first" | "wrong-url" | "duplicate-url" | "unexpected-prompt" | "retirement-failure" | "credential-failure" | "auth-error" | "late-wrong-url" | "late-duplicate-url";
 async function fixture(mode: Mode) {
   const home = await realpath(await mkdtemp(join(tmpdir(), "paperclip-antigravity-stream-test-"))); roots.push(home);
   await mkdir(join(home, "antigravity-acp"), { mode: 0o700 });
@@ -39,15 +39,16 @@ async function fixture(mode: Mode) {
           agentInfo: { name: "antigravity-acp", version: "1.4.3" }, agentCapabilities: { _meta: { antigravity: { paperclipAdmission: 1 } } },
           authMethods: [{ id: "oauth-personal" }] } }) + "\n");
       } else if (request.method === "authenticate") {
-        const url = mode === "wrong-url" ? "https://example.invalid/synthetic-private-marker" : authorizationUrl;
+        const url = mode === "wrong-url" || mode === "late-wrong-url" ? "https://example.invalid/synthetic-private-marker" : authorizationUrl;
         const emitUrl = () => stderr.write("Open the following link to authenticate the ACP server: " + url + "\n");
-        if (mode !== "result-first") emitUrl();
+        const resultFirst = ["result-first", "late-wrong-url", "late-duplicate-url"].includes(mode);
+        if (!resultFirst) emitUrl();
         if (mode === "duplicate-url") emitUrl();
         if (mode === "unexpected-prompt") stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "session/prompt", params: {} }) + "\n");
         stdout.write(JSON.stringify(mode === "auth-error"
           ? { jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "synthetic-private-marker" } }
           : { jsonrpc: "2.0", id: request.id, result: {} }) + "\n");
-        if (mode === "result-first") queueMicrotask(emitUrl);
+        if (resultFirst) queueMicrotask(() => { emitUrl(); if (mode === "late-duplicate-url") emitUrl(); });
       } else throw new Error("Unexpected session/model request");
     });
     done();
@@ -82,7 +83,7 @@ describe("Antigravity login cross-stream completion", () => {
     await login.abort();
   });
 
-  it.each(["wrong-url", "duplicate-url", "unexpected-prompt", "retirement-failure", "credential-failure", "auth-error"] as const)("keeps %s failures closed and private", async mode => {
+  it.each(["wrong-url", "duplicate-url", "unexpected-prompt", "retirement-failure", "credential-failure", "auth-error", "late-wrong-url", "late-duplicate-url"] as const)("keeps %s failures closed and private", async mode => {
     const { home, requests, fetch } = await fixture(mode);
     const login = startAntigravityBrowserLogin(home);
     await vi.waitFor(() => expect(login.outcome).toBeDefined());
@@ -91,6 +92,6 @@ describe("Antigravity login cross-stream completion", () => {
     await login.abort(); expect(setup.close).toHaveBeenCalledOnce();
     expect(requests).toEqual(["initialize", "authenticate"]);
     expect(fetch).toHaveBeenCalledTimes(mode === "credential-failure" ? 1 : 0);
-    if (mode === "wrong-url") expect(login.authorizationUrl).toBeUndefined();
+    if (mode === "wrong-url" || mode === "late-wrong-url") expect(login.authorizationUrl).toBeUndefined();
   });
 });
