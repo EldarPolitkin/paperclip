@@ -139,7 +139,7 @@ describe("qualified branch-only identities from 0d968b005be9063b8c3806ecef5f7523
 
 describe("published Core041 profile history", () => {
   it("retains v85 bytes without admitting its stale shared bridge", async () => {
-    const retained = bytes("copilot-profile-v85-identity.json");
+    const retained = bytes("copilot-profile-v85-cursor-cloud-qualification-historical-identity.json");
     expect(createHash("sha256").update(retained).digest("hex")).toBe("977d68b327f3964e8337ef8ba00230eb1b1697017db21f8010f664fee3d3c70a");
     const identity = JSON.parse(retained.toString("utf8"));
     expect(isSupportedAcpxProfileVersion("copilot", 85)).toBe(true);
