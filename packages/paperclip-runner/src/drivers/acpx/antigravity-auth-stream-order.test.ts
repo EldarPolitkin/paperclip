@@ -47,8 +47,6 @@ async function fixture(mode: Mode) {
         stdout.write(JSON.stringify(mode === "auth-error"
           ? { jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "synthetic-private-marker" } }
           : { jsonrpc: "2.0", id: request.id, result: {} }) + "\n");
-        // Separate pipes do not promise the parent's delivery order. Deliver
-        // the URL while the real owner is draining the completed child.
         if (mode === "result-first") queueMicrotask(emitUrl);
       } else throw new Error("Unexpected session/model request");
     });
