@@ -42,7 +42,7 @@ export const searchTasksAction = {
     "success": {
       "ok": true,
       "operationId": "search_tasks",
-      "result": {}
+      "result": { "tasks": [], "limit": 50, "returnedCount": 0, "hasMore": false, "nextCursor": null }
     }
   },
   "live": {
