@@ -2,7 +2,7 @@ import { hasRequiredWorkspaceRecovery } from "../../../services/workspace-restor
 import { readNativeWorkspaceSyncReference } from "../../../services/native-runtime/native-workspace-sync.js";
 import { isPreDispatchExecutionWaitVerified } from "../../../services/pre-dispatch-execution-wait.js";
 import { isUserCommentContinuationReason } from "../../../services/explicit-native-continuation.js";
-import { queuedCommentIdsFromRunContext, queuedCommentIdsFromWakePayload, withQueuedCommentIdsInWakePayload } from "../../../services/issue-queued-comment-queue.js";
+import { queuedCommentIdsFromRunContext, withQueuedCommentIdsInWakePayload } from "../../../services/issue-queued-comment-queue.js";
 import { notifyExternalAgentSettlement } from "../../external-agents/index.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "../../../services/unsafe-workspace-export-notifications.js";
 import { notifyCancelledWorkspacePreservation } from "../../../services/cancelled-workspace-preservation-notifications.js";
@@ -12,7 +12,7 @@ import { hasConversationContinuationPolicy } from "../../../services/conversatio
 import { getExecutionBlocker } from "../../../services/execution-blocker.js";
 import { validateReconstructedWorkspaceDispatch } from "../../../services/native-runtime/native-workspace-reconstruction.js";
 import { getNativeReviewAssignment } from "../../../services/native-runtime/native-review-participant.js";
-import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agentWakeupRequests,
@@ -27,7 +27,7 @@ import {
   nativeRunFinalizations,
   projects,
 } from "@paperclipai/db";
-import { ISSUE_DISPOSITION_REPAIR_RETRY_REASON } from "@paperclipai/shared";
+import { ISSUE_DISPOSITION_REPAIR_RETRY_REASON, isUuidLike } from "@paperclipai/shared";
 import { withAccountingTransaction } from "../../../services/accounting-transaction.js";
 import type { ActivityPublication } from "../../../services/activity-log.js";
 import { parseObject } from "../../../adapters/utils.js";
@@ -957,19 +957,33 @@ export function createPostgresRunDispatchAdapter(
       sql`${issueComments.deletedAt} is null`, sql`${issueComments.createdByRunId} is null`,
     ));
     if (comments.length !== commentIds.length || comments.some(comment =>
-      !comment.body.trim() || comment.authorUserId !== wake.requestedByActorId)) return null;
-    const coalesced = await tx.select().from(agentWakeupRequests).where(and(
+      !comment.body.trim() || !comment.authorUserId) ||
+      comments.find(comment => comment.id === originalCommentId)?.authorUserId !== wake.requestedByActorId) return null;
+    const sourceIds = context.queuedCommentSourceWakeIds;
+    if (sourceIds !== undefined && (!Array.isArray(sourceIds) || sourceIds.some(id => typeof id !== "string" || !isUuidLike(id)))) return null;
+    const sourceWakeIds = Array.isArray(sourceIds) ? [...new Set(sourceIds as string[])] : [];
+    const adopted = sourceWakeIds.length ? await tx.select().from(agentWakeupRequests).where(and(
       eq(agentWakeupRequests.companyId, run.companyId), eq(agentWakeupRequests.agentId, run.agentId),
       eq(agentWakeupRequests.runId, run.id), eq(agentWakeupRequests.status, "coalesced"),
+      inArray(agentWakeupRequests.id, sourceWakeIds),
       sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
-      eq(agentWakeupRequests.reason, "issue_execution_same_name"),
-      eq(agentWakeupRequests.requestedByActorType, "user"), eq(agentWakeupRequests.requestedByActorId, wake.requestedByActorId),
+    )).for("update") : [];
+    if (adopted.length !== sourceWakeIds.length) return null;
+    const mergeTargets = [wake.id, ...adopted.map(receipt => receipt.id)];
+    const coalesced = await tx.select().from(agentWakeupRequests).where(and(
+      eq(agentWakeupRequests.companyId, run.companyId), eq(agentWakeupRequests.agentId, run.agentId),
+      eq(agentWakeupRequests.status, "coalesced"), eq(agentWakeupRequests.requestedByActorType, "user"),
+      sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
+      or(and(eq(agentWakeupRequests.runId, run.id), eq(agentWakeupRequests.reason, "issue_execution_same_name")),
+        and(or(isNull(agentWakeupRequests.runId), eq(agentWakeupRequests.runId, run.id)),
+          inArray(sql<string>`${agentWakeupRequests.payload}->>'coalescedIntoWakeupRequestId'`, mergeTargets))),
     )).for("update");
-    const recordedCommentIds = new Set([wake, ...coalesced].flatMap(receipt => {
-      const recordedPayload = parseObject(receipt.payload);
+    const authors = new Map(comments.map(comment => [comment.id, comment.authorUserId]));
+    const recordedCommentIds = new Set([wake, ...adopted, ...coalesced].flatMap(receipt => {
+      const recordedPayload = parseObject(receipt.payload), actorId = readNonEmptyString(receipt.requestedByActorId);
       const recordedCommentId = readNonEmptyString(recordedPayload.commentId);
-      return recordedPayload.issueId === issueId && recordedCommentId
-        ? [recordedCommentId, ...queuedCommentIdsFromWakePayload(recordedPayload)] : [];
+      return receipt.requestedByActorType === "user" && recordedPayload.issueId === issueId && actorId &&
+        recordedCommentId && authors.get(recordedCommentId) === actorId ? [recordedCommentId] : [];
     }));
     if (commentIds.some(id => !recordedCommentIds.has(id))) return null;
     const [deferred] = await tx.update(agentWakeupRequests).set({
