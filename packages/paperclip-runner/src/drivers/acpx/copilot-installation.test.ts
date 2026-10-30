@@ -89,9 +89,9 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(89);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(90);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:995381b2cec7a0faf3f5cefbe2421eae7936a2bfa50bb153645f57341f968db3");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:8922d3d41dae0a7b7f7e2de69d50b272b58283232fefb22ffdb6c9b34fa26a6b");
   });
 
   it("retains profile 82 while preserving Kimi revision history in historical profile 83", async () => {

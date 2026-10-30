@@ -71,19 +71,48 @@ producer regression fails before the repair and passes with real file copyback;
 all 114 owning recovery tests pass. This is deterministic recovery evidence,
 not a replacement for the live Daytona case.
 
-The foundation also needs reconciliation with master
-`a8e07500db68f187b19de83823eb7fabf1196021`, which changes shared permission,
-turn attribution and runtime activity handling. Those native changes require a
-fresh pending14 identity, Mac ARM and Linux x64 artifacts, and twenty fresh
-qualification cases. The prior nineteen cases keep their exact source, fixture,
-profile and image identities and do not count toward pending14 acceptance.
-The earlier unexecuted promotion proposals remain historical preparations.
-Qualified15 promotion remains held until fresh acceptance and cleanup pass.
+The foundation was reconciled with master
+`a8e07500db68f187b19de83823eb7fabf1196021`. Shared permission, turn attribution
+and runtime activity changes required new native artifacts and fresh pending14
+qualification. Its immutable declaration and Mac/Linux artifacts remain recorded
+at their actual source identities. The pending11 nineteen passes remain historical
+baseline evidence with no pending14 or later runtime qualification credit.
 
 CI rejected a stale Pi fixture in a shared Rust unit test after candidate13 was
-sealed. That declaration remains immutable. The corrected test and regenerated
-source metadata advance the candidate to14 before any new shipping build or live
-qualification. Both the original failure and candidate13 identity are retained.
+sealed. The corrected test advanced Kimi to pending14 before its shipping build
+or live cases. Candidate13 and the original failure remain unchanged.
+
+Pending14 has two accepted local cases: Stop/new and message-marker. Both retain
+their original grade, scoped native14 audit and full physical host closure. The
+next local Plan-revise-accept attempt failed before its revised model turn at
+PRP `run.attach`: `ACPX durable launch profile digest does not match runner startup`.
+The sequence stopped. Seven other local cases and all ten pending14 Daytona task
+cases remain unstarted. The original failed Plan and earlier zero-capture diagnostic
+stay unchanged; the diagnostic has no acceptance credit.
+
+A credential-free owner regression reproduces the cold restore error. New-run
+startup authority validates, but the saved launch digest still binds the prior-run
+grant. The reviewed native repair proves that exact prior digest by changing only
+the candidate run binding, retains full company/model/profile/closure/expiry/session
+and artifact checks, and separates bare cold attach from authenticated warm rotation.
+Its exact-final baseline fails; five focused tests and all thirty-five owning backend
+tests pass. The initial sandbox TCP-bind failures remain recorded separately from
+the successful loopback-authorized owning run. These controls are not model acceptance.
+
+The repair requires new pending15 native artifacts and a new image. Pending14
+fixtures, artifacts and its two passes retain their exact identities; they are not
+relabeled as pending15. The first proposed paid pending15 case is local
+Plan-revise-accept, once, after the new source/artifacts and caller pass review.
+The image build can proceed in parallel after that source freeze. The earlier held
+qualified15 promotion proposal is stale and remains immutable. Ordinary promotion
+will use a new qualified16 proposal only after required qualification and cleanup.
+
+The pending14 zero-model Daytona preflight passed native create/load, HTTPS checks,
+raw sandbox absence, complete scoped inventory and child-key revocation/list absence.
+It made no model request and supplies zero task-qualification credit. Current
+Foundation, Core and Product exact-head CI and reviews are green at their retained
+pre-repair heads. Original runner-shutdown attempts and the single successful
+failed-jobs-only retry request per Core/Product run remain recorded.
 
 Pending qualification uses the existing trusted startup-admission channel with
 exact company, model, profile, platform closure, expiry, run and session bindings.
@@ -94,9 +123,9 @@ test authority.
 
 | Required gate | Current evidence | Remaining proof |
 | --- | --- | --- |
-| Merged native behavior | Semantic reconciliation and focused controls in progress | Freeze merged source; build and verify both native targets |
-| Local and Daytona acceptance | Prior pending11 cases retained as baseline | Twenty fresh pending14 cases, including complete Stop/new recovery |
-| Credential isolation | SSH probe repair passes actual child-process argument tests | Integrate reviewed repair; verify ordinary Test |
+| Merged native behavior | Reviewed cold restore repair: exact-final RED, focused5 and owning35 GREEN | Freeze pending15 source; build and verify both native targets |
+| Local and Daytona acceptance | Pending14 Stop/new and message pass; Plan failed; prior cases keep their original identities | First pending15 causal local Plan, then required local/Daytona acceptance and full closure |
+| Credential isolation | Protected startup and private-stdin SSH checks pass; pending14 zero-model preflight closes | Verify normal qualified setup and Test without candidate authority |
 | Normal distribution | Maintained closure has eighteen public packages and four daemon targets | Exact qualified-source build, full checks and clean installed consumption |
 | Ordinary product setup | Isolated hosted TEST workspace reserved | Installed Mac and hosted Linux setup/Test/save/reopen, assigned skill, download and reconnect |
 

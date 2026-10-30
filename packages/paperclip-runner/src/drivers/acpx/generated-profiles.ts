@@ -23,12 +23,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "grok",
-    "agentProfileVersion": 16,
+    "agentProfileVersion": 17,
     "agentServerPackage": "builtin:grok-acp",
     "agentServerVersion": "1",
     "agentRuntimePackage": "native:grok",
     "agentRuntimeVersion": "1.0.13",
-    "commandDigest": "sha256:4d6b4c857ba6e63a3eb8c5c406280e4bd0164d3109c940918392c52868bb4263",
+    "commandDigest": "sha256:8c9cb917026844e362e1b28da8529662a15da23cad1002ab5bcec79031b1339e",
     "permissionPolicy": "interactive"
   },
   "pi": {
@@ -62,12 +62,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "copilot",
-    "agentProfileVersion": 89,
+    "agentProfileVersion": 90,
     "agentServerPackage": "@github/copilot",
     "agentServerVersion": "1.0.88",
     "agentRuntimePackage": null,
     "agentRuntimeVersion": null,
-    "commandDigest": "sha256:995381b2cec7a0faf3f5cefbe2421eae7936a2bfa50bb153645f57341f968db3",
+    "commandDigest": "sha256:8922d3d41dae0a7b7f7e2de69d50b272b58283232fefb22ffdb6c9b34fa26a6b",
     "permissionPolicy": "interactive"
   },
   "claude": {
@@ -101,12 +101,12 @@ export const QUALIFIED_ACPX_PROFILE_DATA = {
     "protocolVersion": 1,
     "acpxVersion": "0.13.1",
     "agent": "kimi",
-    "agentProfileVersion": 14,
+    "agentProfileVersion": 15,
     "agentServerPackage": "@moonshot-ai/kimi-code",
     "agentServerVersion": "2.3.3",
     "agentRuntimePackage": null,
     "agentRuntimeVersion": null,
-    "commandDigest": "sha256:d917ef7222b71c8dbe1df46c33f7a439f15492db862307aa6b5427bf82ed196b",
+    "commandDigest": "sha256:606c0cfcaee89813bef5531d666eb208e839116de27cdd46035a08d38c00ecce",
     "qualificationStatus": "pending",
     "permissionPolicy": "interactive"
   }
