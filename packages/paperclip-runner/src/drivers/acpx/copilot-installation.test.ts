@@ -87,15 +87,26 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(88);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(89);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:f3bf015153e6ea86780d5ce1c02f0c0fde66309769c74964fafa90cccd5f60d2");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:4502feb20b925f88c3317f637962d38f8b8df7f1425a485c0f8e3526213fe52b");
   });
 
-
+  it("preserves profile 88 while binding run attachment activity in profile 89", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v88-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("6010dc772d914afec7dd31f35f953ce74b65ab3a648ce54aaee559f908b492f9");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v89-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "harnessSessionSourceSha256", "profileCompatibilitySourceSha256", "runtimeRequestBridgeSourceSha256", "runtimeRequestFacadeSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 88)).toBe(true);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+      agentProfileVersion: 88, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
+  });
 
   it("preserves profile 87 while binding merged operation timing in profile 88", async () => {
-    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-identity.json", import.meta.url));
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-cursor-cloud-qualification-historical-identity.json", import.meta.url));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe("ce9912c34ae9126e74061f7bc170b59589af7cb6ab26751e250da9e9dd9553c9");
     const prior = JSON.parse(bytes.toString("utf8"));
     const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v88-identity.json", import.meta.url), "utf8"));
@@ -108,10 +119,10 @@ describe("Copilot build-owned installation", () => {
   });
 
   it("preserves profile 86 while binding rejected native completion in profile 87", async () => {
-    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-identity.json", import.meta.url));
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-cursor-cloud-qualification-historical-identity.json", import.meta.url));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe("118a4b0a782b56570e5530cca91255da8932c31f827c319b40a5810bd4d446e9");
     const prior = JSON.parse(bytes.toString("utf8"));
-    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-identity.json", import.meta.url), "utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-cursor-cloud-qualification-historical-identity.json", import.meta.url), "utf8"));
     expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
       "agentProfileVersion", "nativeSessionRuntimeSourceSha256", "profileCompatibilitySourceSha256",
     ]);
@@ -690,6 +701,28 @@ it("preserves the historical sleep-maintenance v64 identity", async () => {
     ]);
     expect(isSupportedAcpxProfileVersion("copilot", 23)).toBe(true);
     expect(current.commandDigest).not.toBe(prior.commandDigest);
+  });
+
+  it("preserves v85 while binding runtime activity delivery in v86", () => {
+    const priorBytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v85-identity.json", import.meta.url));
+    expect(createHash("sha256").update(priorBytes).digest("hex")).toBe("15d2790d94d7cc46ac728119ed9b4d07ed2b682be039b3debc716600708d8c1a");
+    const prior = JSON.parse(priorBytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "nativeSessionRuntimeSourceSha256", "profileCompatibilitySourceSha256", "runtimeRequestBridgeSourceSha256", "runtimeRequestFacadeSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 85)).toBe(true);
+  });
+
+  it("preserves v86 while binding activity attachment settlement in v87", () => {
+    const priorBytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-identity.json", import.meta.url));
+    expect(createHash("sha256").update(priorBytes).digest("hex")).toBe("6baeb98adc7132b2afdce8b1d2da1df2f00356677eb4497c49c05aa9def79138");
+    const prior = JSON.parse(priorBytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "harnessSessionSourceSha256", "profileCompatibilitySourceSha256", "runtimeRequestFacadeSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 86)).toBe(true);
   });
 
   it("admits the current declaration and binds its source policy, receipts and patch hashes", () => {
