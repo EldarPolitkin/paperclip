@@ -5,6 +5,18 @@ import { QUALIFIED_ACPX_PROFILE_DATA } from "./generated-profiles.js";
 import { isSupportedAcpxProfileVersion } from "./profile-compatibility.js";
 
 describe("historical ACPX profile decoding", () => {
+  it("retains the published Kimi13 and Copilot88 declarations while admitting only current launch identities", () => {
+    expect(isSupportedAcpxProfileVersion("kimi", 13)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("kimi", 12)).toBe(false);
+    expect(isSupportedAcpxProfileVersion("kimi", 14)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("kimi", 15)).toBe(false);
+    expect(isSupportedAcpxProfileVersion("copilot", 88)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("copilot", 89)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("copilot", 90)).toBe(false);
+    expect(isSupportedAcpxProfileVersion("grok", 15)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("grok", 16)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("grok", 17)).toBe(false);
+  });
   it("retains each provider's existing revision boundary", () => {
     expect(isSupportedAcpxProfileVersion("grok", 7)).toBe(true);
     expect(isSupportedAcpxProfileVersion("pi", 30)).toBe(true);

@@ -3407,7 +3407,7 @@ mod tests {
     #[test]
     fn pi_profile_matches_published_identity_and_rejects_prior_profiles() {
         let published: Value = serde_json::from_str(include_str!(
-            "../../../../test-fixtures/pi-acp/profile-v35-identity.json"
+            "../../../../test-fixtures/pi-acp/profile-v36-identity.json"
         ))
         .unwrap();
         let mut value = descriptor("codex");
@@ -3424,6 +3424,10 @@ mod tests {
         current.validate(&context()).unwrap();
 
         for prior in [
+            include_str!("../../../../test-fixtures/pi-acp/profile-v35-identity.json"),
+            include_str!(
+                "../../../../test-fixtures/pi-acp/profile-v35-kimi-historical-identity.json"
+            ),
             include_str!("../../../../test-fixtures/pi-acp/profile-v34-identity.json"),
             include_str!("../../../../test-fixtures/pi-acp/profile-v33-identity.json"),
             include_str!("../../../../test-fixtures/pi-acp/profile-v32-identity.json"),
