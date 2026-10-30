@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { HarnessSession } from "../../contracts/harness-driver.js";
 import type { PrpEvent } from "../../protocol/replay-contract.js";
-import type { CursorCloudCreateInput, CursorCloudFollowupInput, CursorCloudRun, CursorCloudSseEvent } from "./cloud-client.js";
+import type { CursorCloudArtifact, CursorCloudCreateInput, CursorCloudFollowupInput, CursorCloudRun, CursorCloudSseEvent } from "./cloud-client.js";
 import { CursorCloudClient, CursorCloudClientError } from "./cloud-client.js";
 import { CursorCloudCheckpointStore, cursorCloudDigest } from "./checkpoint.js";
+import { reserveCursorCloudArtifactStaging } from "./artifact-staging-budget.js";
 import { semanticCanonicalJson } from "../semantic-tool-receipt.js";
 import { RUNNER_TOOL_SCOPE_TOKEN_HEADER } from "../runner-tool-bridge.js";
 import { CursorCloudDriver, cursorCloudDriverDescriptor, type CursorCloudDriverOptions, type CursorCloudSessionHandle } from "./cursor-cloud-driver.js";
@@ -45,7 +47,7 @@ class Peer {
   getRun = vi.fn(async () => ({ ...this.native! }));
   cancelRun = vi.fn(async () => { this.native!.status = "CANCELLED"; this.release.resolve(); return { id: runId }; });
   getUsage = vi.fn(async () => ({ totalUsage: { inputTokens: 3, outputTokens: 2, cacheWriteTokens: 0, cacheReadTokens: 0, totalTokens: 5 }, runs: [] }));
-  listArtifacts = vi.fn(async () => ({ items: [] }));
+  listArtifacts = vi.fn(async (): Promise<{ items: CursorCloudArtifact[] }> => ({ items: [] }));
   downloadArtifact = vi.fn(async () => Buffer.alloc(0));
   async *streamRun(_agent: string, _run: string, options: { signal?: AbortSignal; lastEventId?: string } = {}): AsyncGenerator<CursorCloudSseEvent> {
     this.cursor = options.lastEventId;
@@ -112,6 +114,38 @@ async function rpc(path: string, body: unknown, token: string | Record<string, s
 }
 
 describe("Cursor Cloud native driver", () => {
+  it.each(["rejected", "ambiguous"])("retains bounded staging custody after %s controller registration across restart", async mode => {
+    const runtimeDirectory = await mkdtemp("/tmp/cc-artifact-controller-"); roots.push(runtimeDirectory);
+    const artifactRoot = join(runtimeDirectory, "artifacts"), signal = new AbortController().signal;
+    for (let count = 0; count < 255; count++) await reserveCursorCloudArtifactStaging({ runtimeDirectory, artifactRoot, byteSize: 0, signal });
+    const peer = new Peer(), bytes = Buffer.from("verified controller-rejected file");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    peer.listArtifacts.mockImplementation(async () => ({ items: [{ path: "artifacts/result.txt", sizeBytes: bytes.length, updatedAt: "2026-10-28T00:00:00Z" }] }));
+    peer.downloadArtifact.mockResolvedValue(bytes);
+    const handler = vi.fn(async () => {
+      if (mode === "ambiguous") throw new Error("fixture controller registration unavailable");
+      return { success: false, error: "fixture controller registration rejected" };
+    });
+    const f = await fixture(peer, { runtimeDirectory, artifactRoot, dynamicTools: [{ name: "register_deliverable", inputSchema: { type: "object" } }], dynamicToolHandler: handler });
+    await f.session.startTurn({ message: { role: "user", text: "Register the verified result" } }); await peer.created.promise;
+    const input = { contentRef: "cursor-artifact:artifacts/result.txt", filename: "result.txt", byteSize: bytes.length, sha256 };
+    const initialized = await rpc(f.options.relay.socketPath, { id: 0, method: "initialize" }, relayHeaders(peer));
+    const first = await rpc(f.options.relay.socketPath, { id: 1, method: "tools/call", params: { name: "register_deliverable", arguments: input } }, relayHeaders(peer), initialized.session);
+    expect(JSON.stringify(first.value)).toContain("fixture controller registration");
+    expect(handler).toHaveBeenCalledOnce();
+    expect(await readFile(join(artifactRoot, sha256, input.filename))).toEqual(bytes);
+    const budgetPath = join(runtimeDirectory, ".artifact-staging-budget", "usage.json");
+    const budget = await readFile(budgetPath, "utf8"); expect(JSON.parse(budget)).toMatchObject({ allocations: 256, reservedBytes: bytes.length });
+    const snapshot = await f.session.snapshot(); await f.session.detachControllerForRestart!(); await f.pump;
+    const restored = (await new CursorCloudDriver(f.options).recoverSession(snapshot)).session!; sessions.push(restored);
+    const reinitialized = await rpc(f.options.relay.socketPath, { id: 2, method: "initialize" }, relayHeaders(peer));
+    const denied = await rpc(f.options.relay.socketPath, { id: 3, method: "tools/call", params: { name: "register_deliverable", arguments: { ...input, filename: "over-budget.txt" } } }, relayHeaders(peer), reinitialized.session);
+    expect(JSON.stringify(denied.value)).toContain("staging budget");
+    expect(handler).toHaveBeenCalledOnce(); expect(peer.downloadArtifact).toHaveBeenCalledOnce();
+    expect(await readFile(budgetPath, "utf8")).toBe(budget);
+    await expect(lstat(join(artifactRoot, sha256, "over-budget.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  }, 20_000);
+
   it.each([503, 429])("retries a transient observation HTTP %i without replacing work or extending its deadline", async status => {
     let agentId = "", creates = 0, reads = 0, streams = 0;
     const deadlines: Array<number | null> = [];

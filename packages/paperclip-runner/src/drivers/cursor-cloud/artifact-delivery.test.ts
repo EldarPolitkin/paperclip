@@ -6,6 +6,7 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stageCursorCloudArtifact } from "./artifact-delivery.js";
+import { reserveCursorCloudArtifactStaging } from "./artifact-staging-budget.js";
 
 vi.mock("node:fs/promises", async importOriginal => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
@@ -48,7 +49,7 @@ async function postLinkWriter(f: Awaited<ReturnType<typeof fixture>>) {
       client: { listArtifacts: async () => ({ items: [{ path: "artifacts/result.txt", sizeBytes: bytes.length }] }), downloadArtifact: async () => bytes }, signal: new AbortController().signal });
     process.send({ name: "completed", result }, () => process.disconnect());
   `, { mode: 0o600 });
-  const child = spawn(process.execPath, [script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const child = spawn(process.execPath, ["--import", new URL("../../../node_modules/tsx/dist/loader.mjs", import.meta.url).pathname, script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = ""; child.stderr?.on("data", bytes => { stderr = (stderr + bytes).slice(-4_096); });
   const exited = once(child, "exit");
   try {
@@ -79,6 +80,75 @@ function aliasPath(f: Awaited<ReturnType<typeof fixture>>, pid: number, filename
 }
 
 describe("Cursor Cloud artifact registration boundary", () => {
+  it("recovers an exact published final at capacity without a new allocation", async () => {
+    const f = await fixture(); const writer = await postLinkWriter(f);
+    try {
+      await writer.stop();
+      for (let count = 1; count < 256; count++) await reserveCursorCloudArtifactStaging({ ...f.input, byteSize: 0 });
+      const budgetPath = join(f.root, ".artifact-staging-budget", "usage.json");
+      const before = await readFile(budgetPath, "utf8");
+      expect(JSON.parse(before).allocations).toBe(256);
+      expect(await stageCursorCloudArtifact(f.input)).toEqual(f.normalized);
+      expect((await lstat(f.target)).nlink).toBe(1);
+      expect(await readFile(budgetPath, "utf8")).toBe(before);
+      expect(f.input.client.downloadArtifact).toHaveBeenCalledOnce();
+      await expect(stageCursorCloudArtifact({ ...f.input, arguments: { ...f.args, filename: "over-budget.txt" } })).rejects.toThrow(/staging budget/);
+      expect(f.input.client.downloadArtifact).toHaveBeenCalledOnce();
+    } finally { await writer.stop(); }
+  }, 20_000);
+
+  it("rejects changed current provider bytes despite a matching verified cached final", async () => {
+    const f = await fixture(); await stageCursorCloudArtifact(f.input);
+    f.input.client.downloadArtifact.mockResolvedValueOnce(Buffer.alloc(f.bytes.length, "x"));
+    await expect(stageCursorCloudArtifact(f.input)).rejects.toThrow("do not match");
+    expect(await readFile(f.target)).toEqual(f.bytes);
+  });
+
+  it("refuses cached bytes that grow after their initial size observation", async () => {
+    const f = await fixture(); await stageCursorCloudArtifact(f.input);
+    f.input.client.downloadArtifact.mockClear();
+    const original = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let injected = false;
+    vi.mocked(open).mockImplementation((async (path, flags, mode) => {
+      const handle = await original.open(path, flags, mode);
+      if (!injected && String(path) === f.target) {
+        const stat = handle.stat.bind(handle);
+        vi.spyOn(handle, "stat").mockImplementation(async () => {
+          const before = await stat();
+          if (!injected) { injected = true; await writeFile(f.target, Buffer.concat([f.bytes, Buffer.from("extra")])); }
+          return before;
+        });
+      }
+      return handle;
+    }) as typeof open);
+    await expect(stageCursorCloudArtifact(f.input)).rejects.toThrow("identity conflict");
+    expect(f.input.client.downloadArtifact).not.toHaveBeenCalled();
+    expect((await lstat(f.target)).size).toBe(f.bytes.length + 5);
+  });
+
+  it("refuses a new download after legacy retained bytes reach the 256 MiB budget", async () => {
+    const f = await fixture();
+    const size = 16_777_216, hash = createHash("sha256").update(Buffer.alloc(size)).digest("hex");
+    const directory = join(f.input.artifactRoot, hash); await mkdir(directory, { recursive: true, mode: 0o700 });
+    for (let index = 0; index < 16; index++) {
+      const file = await open(join(directory, `legacy-${index}`), "wx", 0o600);
+      try { await file.truncate(size); } finally { await file.close(); }
+    }
+    await expect(stageCursorCloudArtifact(f.input)).rejects.toThrow(/staging budget/);
+    expect(f.input.client.downloadArtifact).not.toHaveBeenCalled();
+    await expect(lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(directory)).toHaveLength(16);
+  });
+
+  it("counts zero-byte retained files against the 256-allocation budget", async () => {
+    const f = await fixture(); const hash = createHash("sha256").update("").digest("hex");
+    const directory = join(f.input.artifactRoot, hash); await mkdir(directory, { recursive: true, mode: 0o700 });
+    for (let index = 0; index < 256; index++) await writeFile(join(directory, `legacy-${index}`), "", { mode: 0o600 });
+    await expect(stageCursorCloudArtifact(f.input)).rejects.toThrow(/staging budget/);
+    expect(f.input.client.downloadArtifact).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toHaveLength(256);
+  });
+
   it("recovers an actual postlink writer crash to one final link", async () => {
     const f = await fixture(); const writer = await postLinkWriter(f);
     try {
@@ -220,10 +290,10 @@ describe("Cursor Cloud artifact registration boundary", () => {
     vi.mocked(open).mockImplementation((async (path, flags, mode) => {
       const handle = await original.open(path, flags, mode);
       if (String(path) === f.target) {
-        const read = handle.readFile.bind(handle);
-        vi.spyOn(handle, "readFile").mockImplementation(async (...args) => {
+        const read = handle.read.bind(handle) as (...args: unknown[]) => Promise<Awaited<ReturnType<typeof handle.read>>>;
+        vi.spyOn(handle, "read").mockImplementation((async (...args: unknown[]) => {
           const bytes = await read(...args); f.controller.abort(new Error("fixture artifact recovery cancelled")); return bytes;
-        });
+        }) as typeof handle.read);
       }
       return handle;
     }) as typeof open);
@@ -282,6 +352,7 @@ describe("Cursor Cloud artifact registration boundary", () => {
       await expect(staging).rejects.toThrow("fixture artifact cancellation");
       await expect(lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" });
       expect(await readdir(f.directory)).toEqual([]);
+      expect(JSON.parse(await readFile(join(f.root, ".artifact-staging-budget", "usage.json"), "utf8")).allocations).toBe(1);
     } finally { resume.resolve(); await staging.catch(() => {}); }
   });
 
@@ -312,7 +383,7 @@ describe("Cursor Cloud artifact registration boundary", () => {
         client: { listArtifacts: async () => ({ items: [{ path: "artifacts/result.txt", sizeBytes: bytes.length }] }), downloadArtifact: async () => bytes }, signal: new AbortController().signal });
       process.send("unexpected-completed");
     `, { mode: 0o600 });
-    const child = spawn(process.execPath, [script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    const child = spawn(process.execPath, ["--import", new URL("../../../node_modules/tsx/dist/loader.mjs", import.meta.url).pathname, script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     let stderr = ""; child.stderr?.on("data", bytes => { stderr = (stderr + bytes).slice(-4_096); });
     const exited = once(child, "exit");
     try {
@@ -381,7 +452,7 @@ describe("Cursor Cloud artifact registration boundary", () => {
       expect(await readdir(f.directory)).toEqual([f.args.filename]);
     }
     expect(await stageCursorCloudArtifact(f.input)).toEqual(f.normalized);
-    expect(synced).toEqual([f.directory, f.directory, f.directory, f.input.artifactRoot, f.root]);
+    expect(synced).toEqual([f.root, f.directory, f.directory, f.directory, f.input.artifactRoot, f.root]);
   });
 
   it.each(["partial", "wrong-hash", "public-mode", "symlink", "directory"])("refuses an existing %s final unchanged", async mode => {
