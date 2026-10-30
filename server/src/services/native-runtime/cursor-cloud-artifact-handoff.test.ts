@@ -71,7 +71,7 @@ describe("Cursor Cloud staged artifact to Core handoff", () => {
         client: { listArtifacts: async () => ({ items: [{ path: "artifacts/result.txt", sizeBytes: bytes.length }] }), downloadArtifact: async () => bytes }, signal: new AbortController().signal });
       process.send("unexpected-completed");
     `, { mode: 0o600 });
-    const child = spawn(process.execPath, [script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    const child = spawn(process.execPath, ["--import", new URL("../../../../packages/paperclip-runner/node_modules/tsx/dist/loader.mjs", import.meta.url).pathname, script], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     let stderr = ""; child.stderr?.on("data", bytes => { stderr = (stderr + bytes).slice(-4_096); });
     const exited = once(child, "exit");
     try {
