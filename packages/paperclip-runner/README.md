@@ -259,7 +259,14 @@ retained rather than mistaken for a completed artifact. A completed publication
 alias is removed only for a proven inactive publisher and the exact verified
 private final inode. Active or unknown aliases remain fenced; successful handoff
 requires a single final link. A remote path never grants access to the controller's
-project files.
+project files. Staging is experimental and bounded to 256 MiB and 256 new
+allocations/import attempts per artifact root, including zero-byte attempts.
+A durable reservation precedes each new download. Rejected, aborted or uncertain
+registration retains the charge and verified file for recovery. The bound survives
+session changes and seeds existing retained usage. Exact existing-file recovery
+still verifies current provider bytes without another body/temp allocation at
+capacity. An uncertain ledger, retained pending reservation or ownership lock
+blocks new imports rather than resetting the budget.
 
 Google Antigravity is an **unqualified, pending** native ACPX integration. The
 explicit `paperclipai runtime setup antigravity` command installs the verified
