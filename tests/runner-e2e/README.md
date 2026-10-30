@@ -3109,7 +3109,9 @@ journals and their holds are not rewritten by changing future campaign policy.
 ### Active steering feature profile
 
 `steering.steer-active` keeps its OpenCode/DeepSeek1017 controller and uses the
-explicit native Pi feature profile with OpenRouter Sonnet4.6 for Morgan. It still
+explicit native Pi feature harness with the same OpenRouter DeepSeek1017 model
+for Morgan. Exact provider model selection must verify or fail without fallback;
+source configuration does not establish model availability. It still
 requires live negotiated steering, the saved human control, same-run delivery
 evidence and the actual blue artifact, or the original visible-rejection branch.
 The existing source-built Pi provisioner must supply its verified asset closure

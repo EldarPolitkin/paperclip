@@ -1,4 +1,6 @@
 import { expect, it, vi } from "vitest";
+import { resolveQualifiedAcpxProfile } from "../../../packages/paperclip-runner/src/drivers/acpx/qualified-profiles.js";
+import { requireVerifiedAcpxModel } from "../../../packages/paperclip-runner/src/drivers/acpx/model-verification.js";
 import type { ChatCatalogContext } from "../chat-catalog-contract.js";
 import { runnerMatrix } from "../catalog.js";
 import { gradeActiveSteering, isBlueColor, hasVisibleBlueDesign, runtimeActiveSteeringCases } from "./runtime-active-steering.js";
@@ -82,7 +84,7 @@ it("creates the genuine Pi feature profile with the existing OpenRouter referenc
   const state = await runtimeActiveSteeringCases[0]!.setup(fixture.ctx);
   expect(fixture.posts).toHaveLength(1);
   expect(fixture.posts[0]).toMatchObject({ name: "Morgan", role: "engineer", reportsTo: "ceo", adapterType: "paperclip_runner", adapterConfig: {
-    provider: "acpx", acpxAgent: "pi", model: "openrouter/anthropic/claude-sonnet-4.6", env: { OPENROUTER_API_KEY: fixture.secretRef },
+    provider: "acpx", acpxAgent: "pi", model: "openrouter/deepseek/deepseek-v4.1-flash-1017", env: { OPENROUTER_API_KEY: fixture.secretRef },
   }, runtimeConfig: { heartbeat: { enabled: false, maxConcurrentRuns: 1 } } });
   expect(fixture.execution.profile.buildAgent({ environmentId: "environment", environmentFixtureId: "local", workspacePath: "/owned/workspace", executionId: "selected-case", secretRefs: { OPENROUTER_API_KEY: fixture.secretRef } })).toEqual(before);
   expect(before.adapterConfig).toMatchObject({ provider: "opencode", model: "openrouter/deepseek/deepseek-v4.1-flash-1017" });
@@ -93,9 +95,10 @@ it("creates the genuine Pi feature profile with the existing OpenRouter referenc
 
 it.each([
   { adapterType: "opencode_local" },
-  { adapterConfig: { provider: "opencode", model: "openrouter/anthropic/claude-sonnet-4.6" } },
+  { adapterConfig: { provider: "opencode", model: "openrouter/deepseek/deepseek-v4.1-flash-1017" } },
   { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "other/model" } },
-  { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "openrouter/anthropic/claude-sonnet-4.6", timeoutSec: 120 } },
+  { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "openrouter/deepseek/deepseek-v4.1-flash-1017", timeoutSec: 120 } },
+  { adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "openrouter/anthropic/claude-sonnet-4.6", timeoutSec: 0 } },
   { companyId: "foreign" },
 ])("rejects a mismatched actual saved feature worker before creating an active task: %j", async publicOverride => {
   const fixture = setupFixture({ publicOverride });
@@ -113,4 +116,23 @@ it("does not replace an absent selected OpenRouter credential reference with amb
   const fixture = setupFixture({ secret: false });
   await expect(runtimeActiveSteeringCases[0]!.setup(fixture.ctx)).rejects.toThrow("Missing fixture secret reference OPENROUTER_API_KEY");
   expect(fixture.posts).toEqual([]);
+});
+
+it("plumbs the saved Pi worker exact requested DeepSeek through the actual driver selector without a catalog fallback", async () => {
+  const fixture = setupFixture(); await runtimeActiveSteeringCases[0]!.setup(fixture.ctx);
+  const requested = (fixture.posts[0]!.adapterConfig as { model: string }).model;
+  const profile = resolveQualifiedAcpxProfile("pi", requested);
+  let current = "wrong/model";
+  const setModel = vi.fn(async (model: string) => { current = model; });
+  const status = await requireVerifiedAcpxModel({ getStatus: async () => ({ models: { currentModelId: current, availableModelIds: [] } }), setModel }, profile);
+  expect(requested).toBe("openrouter/deepseek/deepseek-v4.1-flash-1017");
+  expect(setModel).toHaveBeenCalledExactlyOnceWith("openrouter/deepseek/deepseek-v4.1-flash-1017");
+  expect(status.models?.currentModelId).toBe(requested);
+});
+it("never accepts a wrong actual Sonnet model after the saved Pi DeepSeek request", async () => {
+  const fixture = setupFixture(); await runtimeActiveSteeringCases[0]!.setup(fixture.ctx);
+  const requested = (fixture.posts[0]!.adapterConfig as { model: string }).model;
+  const setModel = vi.fn(async (_model: string) => {});
+  await expect(requireVerifiedAcpxModel({ getStatus: async () => ({ models: { currentModelId: "openrouter/anthropic/claude-sonnet-4.6", availableModelIds: [] } }), setModel }, resolveQualifiedAcpxProfile("pi", requested))).rejects.toMatchObject({ code: "ACPX_EFFECTIVE_MODEL_MISMATCH" });
+  expect(setModel).toHaveBeenCalledExactlyOnceWith("openrouter/deepseek/deepseek-v4.1-flash-1017");
 });

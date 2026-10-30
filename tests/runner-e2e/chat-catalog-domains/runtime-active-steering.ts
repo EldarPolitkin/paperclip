@@ -48,18 +48,18 @@ export function gradeActiveSteering(value: unknown) {
   return c.result();
 }
 export const runtimeActiveSteeringCases = [runtimeDefinition("steering.steer-active", async ctx => {
-  const profile = extendedHarnessProfiles.find(row => row.id === "runner-acpx-pi");
-  if (!profile || profile.model !== "openrouter/anthropic/claude-sonnet-4.6" || profile.credential !== "OPENROUTER_API_KEY")
+  const profile = extendedHarnessProfiles.find(row => row.id === "runner-acpx-pi"), model = ctx.input.execution.profile.model;
+  if (!profile || model !== "openrouter/deepseek/deepseek-v4.1-flash-1017" || profile.credential !== "OPENROUTER_API_KEY")
     throw new Error("Active steering requires the fixed native Pi feature profile");
   const buildInput = { environmentId: ctx.input.fixtures.environment.id, environmentFixtureId: ctx.input.execution.environment.id,
     workspacePath: ctx.input.workspacePath, secretRefs: ctx.input.fixtures.secretRefs, executionId: ctx.input.nonce };
   const feature = profile.buildAgent(buildInput), original = ctx.input.execution.profile.buildAgent(buildInput);
-  const adapterConfig = { ...(feature.adapterConfig as Record<string, unknown>), timeoutSec: (original.adapterConfig as Record<string, unknown>).timeoutSec };
+  const adapterConfig = { ...(feature.adapterConfig as Record<string, unknown>), model, timeoutSec: (original.adapterConfig as Record<string, unknown>).timeoutSec };
   const worker = await runtimeWorker(ctx, "Morgan", { adapterType: feature.adapterType, adapterConfig });
   const saved = worker.adapterConfig;
   if (worker.companyId !== ctx.input.fixtures.company.id || worker.reportsTo !== ctx.input.fixtures.agent.id
     || worker.defaultEnvironmentId !== ctx.input.fixtures.environment.id || worker.adapterType !== "paperclip_runner"
-    || saved?.provider !== "acpx" || saved.acpxAgent !== "pi" || saved.model !== profile.model || saved.timeoutSec !== adapterConfig.timeoutSec)
+    || saved?.provider !== "acpx" || saved.acpxAgent !== "pi" || saved.model !== model || saved.timeoutSec !== adapterConfig.timeoutSec)
     throw new Error("Saved active-steering feature worker differs from its selected native Pi profile");
   const state: Record<string, unknown> = await busyRuntimeWorker(ctx, { worker }), task = state.task as Entity, source = ctx.input.page.url();
   await ctx.input.evidence("runtime-steering-feature-profile.json", {
