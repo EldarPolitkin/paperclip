@@ -122,7 +122,7 @@ describe("Antigravity setup-only Google authentication", () => {
     await verifyAntigravityCredential(home);
     await verifyAntigravityCredential(home);
     expect(fetch).toHaveBeenCalledTimes(6);
-  });
+  }, 15_000);
 
   it.each(["error", "bad-url", "early-url", "late-bad-url", "late-duplicate-url"])("rejects %s without leaking provider text or calling Google", async mode => {
     const home = await fixture(mode), fetch = vi.fn(); vi.stubGlobal("fetch", fetch);

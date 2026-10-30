@@ -11,7 +11,6 @@ import {
 } from "./daytona-image-content.js";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
-
 function lastMatchingDockerignoreRule(dockerignore: string, fixturePath: string) {
   const segments = fixturePath.split("/");
   const ancestors = segments.map((_, index) => segments.slice(0, index + 1).join("/"));
@@ -156,6 +155,7 @@ describe("runner E2E Daytona image contract", () => {
       expect(lastMatchingDockerignoreRule(dockerignore, `packages/paperclip-runner/${declaration}`)?.startsWith("!")).toBe(true);
       await expect(readFile(path.join(repositoryRoot, "packages/paperclip-runner", declaration), "utf8")).resolves.toBeTruthy();
     }
+    expect(lastMatchingDockerignoreRule(dockerignore, "packages/paperclip-runner/test-fixtures/pi-acp/private-live-session.json")?.startsWith("!")).toBe(false);
     for (const developmentOnlyInput of [
       "packages/paperclip-runner/devtools",
       "packages/paperclip-runner/docs",

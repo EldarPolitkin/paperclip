@@ -87,11 +87,25 @@ vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi
 
 describe("Copilot build-owned installation", () => {
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(87);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(88);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:29af65cc05ce23bcbde7e69f96e857cb5f68a58e4fca18b91b93ed9b31cc5a6d");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:f3bf015153e6ea86780d5ce1c02f0c0fde66309769c74964fafa90cccd5f60d2");
   });
 
+
+
+  it("preserves profile 87 while binding merged operation timing in profile 88", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("ce9912c34ae9126e74061f7bc170b59589af7cb6ab26751e250da9e9dd9553c9");
+    const prior = JSON.parse(bytes.toString("utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v88-identity.json", import.meta.url), "utf8"));
+    expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual([
+      "agentProfileVersion", "profileCompatibilitySourceSha256", "runtimeRequestBridgeSourceSha256", "semanticSidecarSourceSha256",
+    ]);
+    expect(isSupportedAcpxProfileVersion("copilot", 87)).toBe(true);
+    await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
+      agentProfileVersion: 87, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
+  });
 
   it("preserves profile 86 while binding rejected native completion in profile 87", async () => {
     const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v86-identity.json", import.meta.url));
