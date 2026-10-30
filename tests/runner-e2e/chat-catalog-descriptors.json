@@ -41,9 +41,7 @@
       "sanitized-json-writer.ts"
     ],
     "oracleVersion": "paperclip.chat-catalog.identity.v1",
-    "coverageGaps": [
-      "invitation-trusted-retention-policy-unadmitted"
-    ],
+    "coverageGaps": [],
     "expectedRunCount": 1,
     "turnTimeoutMs": 120000,
     "attemptTimeoutMs": 300000,

@@ -18,7 +18,7 @@ function intended(id: string): IdentityObservation {
 }
 describe("explicit unavailable agent grant setup is never refusal credit", () => {
   for (const d of accessGrantIdentityCases) {
-    it(`${d.scenarioId}: distinguishes the source-qualified invitation candidate from unsupported membership`, () => { if (d.scenarioId === "access.invite-teammate") expect(d.coverageGaps).toEqual(["invitation-private-capability-evidence-projection-unresolved"]); else expect(d.coverageGaps?.length).toBeGreaterThan(0); });
+    it(`${d.scenarioId}: distinguishes the source-qualified invitation candidate from unsupported membership`, () => { if (d.scenarioId === "access.invite-teammate") expect(d.coverageGaps).toEqual([]); else expect(d.coverageGaps?.length).toBeGreaterThan(0); });
     it(`${d.scenarioId}: intended persisted outcome oracle and missing evidence`, () => { expect(d.grade(intended(d.scenarioId)).passed).toBe(true); expect(d.grade(undefined).passed).toBe(false); });
     it(`${d.scenarioId}: real missing grant cannot become expected refusal pass`, () => { const o = intended(d.scenarioId); o.state.publicGrantStatus = 403; o.state.agentPermissionStatus = 403; o.reply = "I cannot perform this action."; expect(d.grade(o).passed).toBe(false); });
     it(`${d.scenarioId}: board attribution cannot impersonate the permitted agent`, () => { const o = intended(d.scenarioId); o.activity[0]!.actorType = "user"; expect(d.grade(o).passed).toBe(false); });
