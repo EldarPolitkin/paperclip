@@ -1,8 +1,8 @@
 import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, realpath, mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { readSteeringPiReceipt, requireSteeringPiTime, STEERING_PI_EXECUTION } from "./steering-pi-receipt.js";
+import { boundedOwnedFile, readSteeringPiReceipt, requireSteeringPiTime, STEERING_PI_EXECUTION } from "./steering-pi-receipt.js";
 import type { MatrixExecution } from "./types.js";
 import type { ManualPrivateHandoff } from "./manual-private-handoff.js";
 
@@ -59,4 +59,52 @@ export async function admitSteeringPiTarget(input: {
   return { schema: "paperclip.steering-pi-target-admission/v1" as const, receipt,
     sourceFingerprintDigest: fingerprint?.digest ?? before?.digest ?? null, actualRuntimeFingerprint: null,
     originalCaseMs: 720_000, cleanupReserveMs: 90_000 };
+}
+
+export const STEERING_PI_TARGET_FAILURE = "steering-pi-target-failure.json";
+export const STEERING_PI_TARGET_ENTERED = "steering-pi-target-entered.json";
+function targetTuple(context: ManualPrivateHandoff) {
+  if (!context.private || context.attempt !== "1" || context.executionIds.join() !== STEERING_PI_EXECUTION) throw new Error("Invalid steering operation custody");
+  return { executionId: STEERING_PI_EXECUTION, runId: context.runId, attempt: context.attempt, workflowSha: context.workflowSha, targetSha: context.targetSha };
+}
+async function absent(file: string) {
+  try { await lstat(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  throw new Error("Conflicting steering admission state");
+}
+async function exclusiveState(context: ManualPrivateHandoff, name: string, value: unknown) {
+  const root = await lstat(context.root);
+  if (await realpath(context.root) !== context.root || !root.isDirectory() || root.isSymbolicLink() || root.mode & 0o077 || root.uid !== process.getuid!()) throw new Error("Invalid steering operation root");
+  const file = await open(path.join(context.root, name), "wx", 0o600);
+  try { await file.writeFile(`${JSON.stringify(value)}\n`); await file.sync(); } finally { await file.close(); }
+}
+/** Only the two caught main gates can assert no coordinator/attempt entry. A
+ * durable entered state is exclusive and can never be overwritten by failure. */
+export async function recordSteeringPiMainFailure(context: ManualPrivateHandoff, gate: "selection" | "post-setup") {
+  const tuple = targetTuple(context);
+  if (!["selection", "post-setup"].includes(gate)) throw new Error("Invalid steering main gate");
+  await absent(path.join(context.root, STEERING_PI_TARGET_ENTERED));
+  await exclusiveState(context, STEERING_PI_TARGET_FAILURE, { schema: "paperclip.steering-pi-target-operation/v1", kind: "steering-pi-target-admission", ...tuple,
+    state: "closed", gate, outcome: "blocked", attemptCoordinatorStarted: false, frameworkStarted: false, runtimeFingerprint: null });
+}
+export async function enterSteeringPiTarget(context: ManualPrivateHandoff) {
+  const tuple = targetTuple(context);
+  await absent(path.join(context.root, STEERING_PI_TARGET_FAILURE));
+  await exclusiveState(context, STEERING_PI_TARGET_ENTERED, { schema: "paperclip.steering-pi-target-entry/v1", ...tuple, state: "entered" });
+}
+export async function retainSteeringPiAttemptGate(context: ManualPrivateHandoff, directory: string, gate: "pre-framework" | "pre-spawn-clock") {
+  await mkdir(path.join(directory, "snapshots"), { recursive: true, mode: 0o700 });
+  await writeFile(path.join(directory, "snapshots/steering-pi-attempt-gate.json"), `${JSON.stringify({ schema: "paperclip.steering-pi-attempt-gate/v1", ...targetTuple(context), gate, attemptAdmitted: true, outcome: "blocked", frameworkStarted: false, runtimeFingerprint: null })}\n`, { flag: "wx", mode: 0o600 });
+}
+/** Preserve available actual originals at this attempt's failure boundary. The
+ * launcher stream is an observed prefix; later output is not claimed complete. */
+export async function retainSteeringPiAttemptOriginals(context: ManualPrivateHandoff, directory: string) {
+  const files = ["steering-pi-operation.json", "steering-pi-assets.json", "steering-pi-installer.stdout.log", "steering-pi-installer.stderr.log", "launcher-output.log"];
+  for (const name of files) {
+    let bytes: Buffer;
+    try { bytes = await boundedOwnedFile(path.join(context.root, name), 4 * 1024 * 1024, true); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    const folder = name.endsWith(".log") ? "playwright-output" : "snapshots";
+    await mkdir(path.join(directory, folder), { recursive: true, mode: 0o700 });
+    await writeFile(path.join(directory, folder, name), bytes, { flag: "wx", mode: 0o600 });
+  }
 }

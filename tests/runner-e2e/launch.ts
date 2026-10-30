@@ -1,5 +1,5 @@
 import { requireSteeringPiTime } from "./steering-pi-receipt.js";
-import { admitSteeringPiTarget } from "./steering-pi-target-admission.js";
+import { admitSteeringPiTarget, enterSteeringPiTarget, recordSteeringPiMainFailure, retainSteeringPiAttemptGate, retainSteeringPiAttemptOriginals, selectsSteeringPiAdmission } from "./steering-pi-target-admission.js";
 import { chatCatalogCaseFingerprint, normalizedChatCatalogExecution } from "./chat-catalog-fingerprint.js";
 import { withholdPrivateScreenshots } from "./screenshot-privacy.js";
 import { copyHealthHelloDetail } from "./chat-readiness-detail.js";
@@ -113,6 +113,7 @@ let resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
 let manualPrivateHandoff: ManualPrivateHandoff | undefined;
 const manualEvidenceSecrets = new Set<string>();
 let manualEvidenceFailure: Error | undefined;
+let steeringPiMainBlocked = false;
 
 /** Reuse the existing durable case registry, including registrations made after
  * the worker starts. Failure must stop sealing, never certify only env roots. */
@@ -631,7 +632,10 @@ async function runAttempt(input: {
       executions,
       repositoryRoot,
     );
-    const steeringAdmission = await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "pre-framework" });
+    const steeringAdmission = await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "pre-framework" }).catch(async error => {
+      if (manualPrivateHandoff && selectsSteeringPiAdmission(executions)) await retainSteeringPiAttemptGate(manualPrivateHandoff, path.join(privateDir, "cases", execution.task.id), "pre-framework");
+      throw error;
+    });
     if (steeringAdmission) {
       const snapshots = path.join(privateDir, "cases", execution.task.id, "snapshots"); await mkdir(snapshots, { recursive: true, mode: 0o700 });
       await writeFile(path.join(snapshots, "steering-pi-admission.json"), `${JSON.stringify(steeringAdmission)}\n`, { mode: 0o600, flag: "wx" });
@@ -711,7 +715,10 @@ async function runAttempt(input: {
             0,
           ) +
           5 * 60_000;
-    if (steeringAdmission) requireSteeringPiTime(steeringAdmission.receipt.jobDeadlineMs, Date.now());
+    if (steeringAdmission) {
+      try { requireSteeringPiTime(steeringAdmission.receipt.jobDeadlineMs, Date.now()); }
+      catch (error) { await retainSteeringPiAttemptGate(manualPrivateHandoff!, path.join(privateDir, "cases", execution.task.id), "pre-spawn-clock"); throw error; }
+    }
     const processResult = await runProcess(
       runnerE2EPlaywrightInvocation(repositoryRoot, playwrightArgs),
       childEnv,
@@ -1009,6 +1016,7 @@ async function runAttempt(input: {
           if (manualEvidenceFailure) throw manualEvidenceFailure;
           await mkdir(casePrivateDir, { recursive: true, mode: 0o700 });
           await copySharedEvidence(privateDir, casePrivateDir);
+          if (selectsSteeringPiAdmission(executions)) await retainSteeringPiAttemptOriginals(manualPrivateHandoff, casePrivateDir);
           await preserveManualOriginal(candidate.id, casePrivateDir);
           const previousScan = originalPackageScans.get(candidate.id);
           const evidence = previousScan?.evidence ?? await packageEvidence({ privateDir: casePrivateDir, uploadDir: validation, secrets: attemptSecrets, expectPassScreenshot: original.status === "passed", ...(manualPrivateHandoff ? { privateCell: { owner: await privateCellEvidenceOwner(manualPrivateHandoff, candidate.id), layout: "original" as const } } : {}) });
@@ -1261,7 +1269,10 @@ async function main() {
   }
   if (process.env.GITHUB_ACTIONS === "true" && executions.some(execution => requiresPrivateManualEvidence(execution.id)) && !manualPrivateHandoff)
     throw new Error("Sensitive GHA evidence requires verified restricted retention before setup");
-  await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "selection" });
+  await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "selection" }).catch(async error => {
+    if (manualPrivateHandoff && selectsSteeringPiAdmission(executions)) { await recordSteeringPiMainFailure(manualPrivateHandoff, "selection"); steeringPiMainBlocked = true; }
+    throw error;
+  });
 
   if (process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST && executions.some(execution => execution.task.flow === "provider_connection")) throw new Error("Provider connection campaign has no budgeted routing qualification");
   if (executions.some(execution => execution.task.flow === "github_review_journey")) {
@@ -1308,7 +1319,10 @@ async function main() {
   }
 
   await admitSteeringPiTarget({ executions, context: manualPrivateHandoff, root: repositoryRoot, runnerName: process.env.RUNNER_NAME ?? "", stage: "post-setup",
-    fingerprint: () => chatCatalogCaseFingerprint(findChatCatalogCase(executions[0]!.task.id)!, normalizedChatCatalogExecution(executions[0]!)) });
+    fingerprint: () => chatCatalogCaseFingerprint(findChatCatalogCase(executions[0]!.task.id)!, normalizedChatCatalogExecution(executions[0]!)) }).catch(async error => {
+    if (manualPrivateHandoff && selectsSteeringPiAdmission(executions)) { await recordSteeringPiMainFailure(manualPrivateHandoff, "post-setup"); steeringPiMainBlocked = true; }
+    throw error;
+  });
   await loadLocalEnvironment(process.env);
   assertRemoteNativeEvidencePrerequisites(executions, process.env);
   const missingCredentials = process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST ? [] : [
@@ -1355,6 +1369,7 @@ async function main() {
     `Running ${executions.length} isolated execution(s) with max parallelism ${requestedParallelism}`,
   );
   const attempts: RunnerE2EResult[] = [];
+  if (manualPrivateHandoff && selectsSteeringPiAdmission(executions)) await enterSteeringPiTarget(manualPrivateHandoff);
   const operations = process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST
     ? await openEvalOperations(process.env.PAPERCLIP_E2E_OPERATIONS_MANIFEST, executions, options.maxAutomaticRetries, process.env) : undefined;
   let finalResults: RunnerE2EResult[] = [];
@@ -1430,7 +1445,7 @@ await main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 }).finally(async () => {
-  if (manualPrivateHandoff) {
+  if (manualPrivateHandoff && !steeringPiMainBlocked) {
     if (manualEvidenceFailure) throw manualEvidenceFailure;
     await sealManualResultEvidence(manualPrivateHandoff, [...manualEvidenceSecrets]);
   }

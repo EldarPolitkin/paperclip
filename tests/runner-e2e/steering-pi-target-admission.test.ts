@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile, chmod } from "node:fs/promises";
 import os from "node:os"; import path from "node:path";
 import { runnerMatrix } from "./catalog.js";
-import { admitSteeringPiTarget } from "./steering-pi-target-admission.js";
+import { admitSteeringPiTarget, enterSteeringPiTarget, recordSteeringPiMainFailure, retainSteeringPiAttemptGate, retainSteeringPiAttemptOriginals } from "./steering-pi-target-admission.js";
 import { digest, STEERING_PI_EXECUTION, STEERING_PI_JOB_MS, STEERING_PI_PROFILE, STEERING_PI_SOURCE_CLOSURE } from "./steering-pi-receipt.js";
 import { PI_NODE_VERSION } from "../../packages/paperclip-runner/src/drivers/acpx/pi-node-pins.js";
 import { MANUAL_PRIVATE_PROTOCOL } from "./manual-private-retention.js";
@@ -93,39 +93,83 @@ it("rechecks the full remaining case budget at the final boundary after earlier 
 it("actual launcher call expressions retain the selected tuple and all three phase contracts", async () => {
  const f = await fixture(), { readSteeringPiReceipt } = await import("./steering-pi-receipt.js"), { verifySteeringPiBundle } = await import("./steering-pi-target-admission.js"); const deps = { now: f.now, readReceipt: readSteeringPiReceipt, verifyBundle: verifySteeringPiBundle };
  const source = await readFile(new URL("./launch.ts", import.meta.url), "utf8");
- const expressions = [...source.matchAll(/admitSteeringPiTarget\((\{[\s\S]*?\})\);/g)].map(match => match[1]!);
+ const expressions = [...source.matchAll(/admitSteeringPiTarget\((\{[\s\S]*?\})\)(?:;|\.catch)/g)].map(match => match[1]!);
  const inputs = expressions.map(expression => Function("executions", "manualPrivateHandoff", "repositoryRoot", "process", "chatCatalogCaseFingerprint", "findChatCatalogCase", "normalizedChatCatalogExecution", `return ${stripTypeScriptTypes(`(${expression})`, { mode: "strip" })}`)(f.input.executions, f.context, f.root, { env: { RUNNER_NAME: f.input.runnerName } }, f.fingerprint, () => ({}), () => ({})));
  for (const stage of ["selection", "post-setup", "pre-framework"] as const) {
   const input = inputs.find(value => value.stage === stage); expect(input).toBeDefined(); expect((await admitSteeringPiTarget(input, deps))?.receipt.runId).toBe("123");
  }
  expect(f.fingerprint).toHaveBeenCalledTimes(1);
 });
-it.each(["missing-receipt", "verified-selection", "expired-post-setup"] as const)("actual main stops at the safe %s boundary", async mode => {
+it.each(["missing-receipt", "verified-selection", "expired-post-setup", "entered-coordinator", "admitted-inner"] as const)("actual main stops at the safe %s boundary", async mode => {
  const f = await fixture(), calls: string[] = [], argv = process.argv, exit = process.exitCode;
  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const, listeners = new Map(signals.map(signal => [signal, process.listeners(signal)]));
- vi.doMock("./manual-private-handoff.js", async original => ({ ...await original<typeof import("./manual-private-handoff.js")>(), readManualPrivateHandoff: async () => f.context, sealManualResultEvidence: async () => { calls.push("finalize"); } }));
+ vi.doMock("./manual-private-handoff.js", async original => ({ ...await original<typeof import("./manual-private-handoff.js")>(), readManualPrivateHandoff: async () => f.context, sealManualResultEvidence: async () => { calls.push("finalize"); }, sealStandardOriginalEvidence: async () => { calls.push("original-seal"); } }));
  vi.doMock("./steering-pi-target-admission.js", async original => {
   const actual = await original<typeof import("./steering-pi-target-admission.js")>();
-  return { ...actual, admitSteeringPiTarget: (input: Parameters<typeof actual.admitSteeringPiTarget>[0]) => actual.admitSteeringPiTarget(input, {
+  return { ...actual, admitSteeringPiTarget: (input: Parameters<typeof actual.admitSteeringPiTarget>[0]) => { if (mode === "admitted-inner" && input.stage === "pre-framework") { calls.push("inner-gate"); return Promise.reject(new Error("SYNTHETIC_INNER_GATE_STOP")); } return actual.admitSteeringPiTarget(input, {
    now: f.now, readReceipt: async () => { calls.push("receipt"); if (mode === "missing-receipt") throw new Error("SYNTHETIC_MISSING_RECEIPT"); return f.receipt as Awaited<ReturnType<typeof import("./steering-pi-receipt.js").readSteeringPiReceipt>>; },
    verifyBundle: async () => { calls.push("bundle"); },
-  }) };
+  }); } };
  });
  vi.doMock("./chat-remote-host.js", () => ({ prepareChatRemoteHost: async () => { calls.push("host"); if (mode === "verified-selection") throw new Error("SYNTHETIC_HOST_STOP"); return undefined; } }));
- vi.doMock("./chat-catalog-fingerprint.js", async original => ({ ...await original<typeof import("./chat-catalog-fingerprint.js")>(), chatCatalogCaseFingerprint: () => { calls.push("fingerprint"); f.advance(STEERING_PI_JOB_MS); return f.fingerprint(); } }));
- vi.stubEnv("PAPERCLIP_E2E_CAMPAIGN_ID", "synthetic-steering-main"); vi.stubEnv("PAPERCLIP_E2E_OPERATIONS_MANIFEST", ""); vi.stubEnv("RUNNER_NAME", "owned-runner");
+ vi.doMock("./chat-catalog-fingerprint.js", async original => ({ ...await original<typeof import("./chat-catalog-fingerprint.js")>(), chatCatalogCaseFingerprint: () => { calls.push("fingerprint"); if (mode === "expired-post-setup") f.advance(STEERING_PI_JOB_MS); return f.fingerprint(); } }));
+ vi.doMock("./operations.js", () => ({ openEvalOperations: async () => { calls.push("coordinator"); if (mode !== "admitted-inner") throw new Error("SYNTHETIC_COORDINATOR_STOP"); return {
+  manifest: { ledgerPath: "/synthetic/ledger", limits: { campaignId: "synthetic", maxConcurrent: 1 } }, start: async () => { calls.push("attempt-admitted"); return undefined; }, close: async () => { calls.push("coordinator-close"); },
+ }; } }));
+ vi.doMock("./manual-private-report-assets.js", async original => ({ ...await original<typeof import("./manual-private-report-assets.js")>(), privateCellEvidenceOwner: async () => ({}) }));
+ vi.doMock("./evidence.js", async original => { const actual = await original<typeof import("./evidence.js")>(); return { ...actual, packageEvidence: (input: Parameters<typeof actual.packageEvidence>[0]) => actual.packageEvidence({ ...input, privateCell: undefined }) }; });
+ vi.doMock("./ports.js", () => ({ reserveRunnerE2EServerPort: async () => 12345 }));
+ vi.doMock("./shared-memory.js", () => ({ snapshotDarwinSharedMemory: () => [], reapNewDetachedDarwinSharedMemory: () => {} }));
+ vi.doMock("./source-sdk-evidence.js", () => ({ copyRetainedSourceSdk: async () => {} }));
+ vi.doMock("./operations-report.js", () => ({ readEvalOperationsReport: async () => undefined }));
+ vi.doMock("./harness-env.js", async original => ({ ...await original<typeof import("./harness-env.js")>(), resolvePaperclipRunnerBinaryForHarness: () => undefined }));
+ vi.doMock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn: () => { throw new Error("Process spawn forbidden in admission controls"); } }));
+ vi.stubEnv("PAPERCLIP_E2E_CAMPAIGN_ID", "synthetic-steering-main"); vi.stubEnv("PAPERCLIP_E2E_OPERATIONS_MANIFEST", ["entered-coordinator", "admitted-inner"].includes(mode) ? "/synthetic/manifest" : ""); vi.stubEnv("RUNNER_NAME", "owned-runner");
+ vi.stubEnv("OPENROUTER_API_KEY", "synthetic-admission-model-root-123456");
  vi.stubGlobal("fetch", () => { throw new Error("Network forbidden in main boundary controls"); });
  vi.spyOn(console, "log").mockImplementation(() => {}); const errors = vi.spyOn(console, "error").mockImplementation(() => {});
  try {
   vi.resetModules(); process.argv = [process.execPath, "/synthetic/launch.ts", "--id", STEERING_PI_EXECUTION]; process.exitCode = undefined;
   await import("./launch.js"); expect(process.exitCode).toBe(1);
-  if (mode === "missing-receipt") { expect(calls).toEqual(["receipt", "finalize"]); expect(errors).toHaveBeenCalledWith("SYNTHETIC_MISSING_RECEIPT"); }
+  if (mode === "missing-receipt" || mode === "expired-post-setup") expect(JSON.parse(await readFile(path.join(f.root, "steering-pi-target-failure.json"), "utf8"))).toMatchObject({ kind: "steering-pi-target-admission", gate: mode === "missing-receipt" ? "selection" : "post-setup", state: "closed", attemptCoordinatorStarted: false, frameworkStarted: false, runId: f.context.runId });
+  if (mode === "admitted-inner") {
+   expect(calls).toContain("attempt-admitted"); expect(calls).toContain("inner-gate"); expect(calls).toContain("original-seal");
+   const result = JSON.parse(await readFile(path.join(f.root, "results/synthetic-steering-main/chat-features/runner-opencode/local/steering.steer-active/attempt-1/result.json"), "utf8"));
+   expect(result).toMatchObject({ status: "failed", attempt: 1, executionId: STEERING_PI_EXECUTION });
+   const gate = JSON.parse(await readFile(path.join(f.root, "capture/cases/steering.steer-active/snapshots/steering-pi-attempt-gate.json"), "utf8"));
+   expect(gate).toMatchObject({ gate: "pre-framework", attemptAdmitted: true });
+   await expect(readFile(path.join(f.root, "steering-pi-target-failure.json"))).rejects.toThrow(/ENOENT/);
+  }
+  if (mode === "entered-coordinator") { expect(JSON.parse(await readFile(path.join(f.root, "steering-pi-target-entered.json"), "utf8"))).toMatchObject({ state: "entered", runId: "123" }); await expect(readFile(path.join(f.root, "steering-pi-target-failure.json"))).rejects.toThrow(/ENOENT/); expect(calls).toContain("coordinator"); }
+  if (mode === "missing-receipt") { expect(calls).toEqual(["receipt"]); expect(errors).toHaveBeenCalledWith("SYNTHETIC_MISSING_RECEIPT"); }
   if (mode === "verified-selection") { expect(calls).toEqual(["receipt", "bundle", "host", "finalize"]); expect(errors).toHaveBeenCalledWith("SYNTHETIC_HOST_STOP"); }
-  if (mode === "expired-post-setup") { expect(calls).toEqual(["receipt", "bundle", "host", "fingerprint", "receipt", "bundle", "finalize"]); expect(errors).toHaveBeenCalledWith("Insufficient time for the unchanged steering case and cleanup"); }
+  if (mode === "expired-post-setup") { expect(calls).toEqual(["receipt", "bundle", "host", "fingerprint", "receipt", "bundle"]); expect(errors).toHaveBeenCalledWith("Insufficient time for the unchanged steering case and cleanup"); }
  } finally {
   process.argv = argv; process.exitCode = exit;
   for (const signal of signals) for (const listener of process.listeners(signal)) if (!listeners.get(signal)!.includes(listener)) process.removeListener(signal, listener);
-  for (const module of ["./manual-private-handoff.js", "./steering-pi-target-admission.js", "./chat-remote-host.js", "./chat-catalog-fingerprint.js"]) vi.doUnmock(module);
+  for (const module of ["./manual-private-handoff.js", "./steering-pi-target-admission.js", "./chat-remote-host.js", "./chat-catalog-fingerprint.js", "./operations.js", "./ports.js", "./shared-memory.js", "./source-sdk-evidence.js", "./operations-report.js", "./harness-env.js", "./evidence.js", "./manual-private-report-assets.js", "node:child_process"]) vi.doUnmock(module);
   vi.unstubAllEnvs(); vi.unstubAllGlobals();
  }
+});
+
+it("exclusive entry and failure states are monotonic, reject a foreign existing carrier and never infer missing means blocked", async () => {
+ const f = await fixture(); await enterSteeringPiTarget(f.context);
+ await expect(recordSteeringPiMainFailure(f.context, "post-setup")).rejects.toThrow("Conflicting");
+ await expect(enterSteeringPiTarget(f.context)).rejects.toThrow();
+ const g = await fixture(); await recordSteeringPiMainFailure(g.context, "selection");
+ await expect(enterSteeringPiTarget(g.context)).rejects.toThrow("Conflicting");
+ await expect(recordSteeringPiMainFailure(g.context, "selection")).rejects.toThrow();
+ const h = await fixture(); await writeFile(path.join(h.root, "steering-pi-target-entered.json"), '{"state":"unknown"}', { mode: 0o600 });
+ await expect(recordSteeringPiMainFailure(h.context, "selection")).rejects.toThrow();
+});
+it("admitted gate retains a normal typed attempt failure and actual known originals without producing a main-stop operation", async () => {
+ const f = await fixture(); await enterSteeringPiTarget(f.context);
+ const directory = path.join(f.root, "capture/cases/steering.steer-active");
+ await writeFile(path.join(f.root, "steering-pi-operation.json"), '{"actualInstaller":"unchanged"}', { mode: 0o600 });
+ await writeFile(path.join(f.root, "launcher-output.log"), 'actual observed launcher prefix', { mode: 0o600 });
+ await retainSteeringPiAttemptGate(f.context, directory, "pre-framework");
+ await retainSteeringPiAttemptOriginals(f.context, directory);
+ expect(JSON.parse(await readFile(path.join(directory, "snapshots/steering-pi-attempt-gate.json"), "utf8"))).toMatchObject({ attemptAdmitted: true, gate: "pre-framework", runtimeFingerprint: null });
+ expect(await readFile(path.join(directory, "playwright-output/launcher-output.log"), "utf8")).toBe('actual observed launcher prefix');
+ await expect(readFile(path.join(f.root, "steering-pi-target-failure.json"))).rejects.toThrow(/ENOENT/);
 });
