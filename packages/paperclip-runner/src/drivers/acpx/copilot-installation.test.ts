@@ -86,21 +86,21 @@ async function withCopilotTestPlatform<T>(arch: "x64" | "arm64", run: () => Prom
 vi.mock("./installation-integrity.js", () => ({ verifyNativeAcpxInstallation: vi.fn() }));
 
 describe("Copilot build-owned installation", () => {
-  it("preserves published v87 while binding managed command controls in v88", async () => {
-    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v87-identity.json", import.meta.url));
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe("505bb72a933d11e3f5aa8a1700d239c06b4d34bb83d5187470483812df996501");
+  it("preserves published v88 while binding managed launch policy in v91", async () => {
+    const bytes = readFileSync(new URL("../../../test/fixtures/copilot-profile-v88-identity.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("81e5fbccf057c04e012f638dc7a02c5758bf6ca67f7c4ed0045f3f61525401c2");
     const prior = JSON.parse(bytes.toString("utf8"));
-    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v88-identity.json", import.meta.url), "utf8"));
+    const current = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v91-identity.json", import.meta.url), "utf8"));
     expect(Object.keys(current.declaration).filter(key => current.declaration[key] !== prior.declaration[key]).sort()).toEqual(["agentProfileVersion", "configuredEnvironmentRustSourceSha256", "configuredEnvironmentSourceSha256", "credentialBindingSourceSha256", "profileCompatibilitySourceSha256", "providerLaunchSourceSha256"]);
-    expect(isSupportedAcpxProfileVersion("copilot", 87)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("copilot", 88)).toBe(true);
     await expect(verifyCopilotInstallation({ ...QUALIFIED_ACPX_PROFILES.copilot,
-      agentProfileVersion: 87, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
+      agentProfileVersion: 88, commandDigest: prior.commandDigest })).rejects.toThrow("exact pinned");
   });
 
   it("admits the current profile with environment launch preparation", () => {
-    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(90);
+    expect(QUALIFIED_ACPX_PROFILES.copilot.agentProfileVersion).toBe(91);
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBeUndefined();
-    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:53016e6c7ccd5ea3e2602f98173cd176843e2f8e8376b2886bdec0576309c580");
+    expect(QUALIFIED_ACPX_PROFILES.copilot.commandDigest).toBe("sha256:e4383c48ad21898dfe38609fdc8c0fa9a76dfcb8582a64b5415f107846904aa9");
   });
 
 it("preserves published v65 while binding retained-maintenance waits in v66", async () => {
